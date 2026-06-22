@@ -1,9 +1,77 @@
-:root {
-  --font-display:
-    Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
-    Segoe UI Symbol, Noto Color Emoji;
-  --font-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
-  --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
-  --font-serif: Georgia, 'Times New Roman', serif;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Stoa palette (see STYLING.md):
+ *   BLACK   #131211   WHITE #FEFDFC   (greys are kept slightly warm)
+ *   ACCENT  linear-gradient(#98514B -> #F9B764)
+ * Colors are stored as HSL channels so reusables `hsl(var(--x))` works.
+ */
+@layer base {
+  :root {
+    --background: 40 33% 99%; /* #FEFDFC */
+    --foreground: 30 8% 7%; /* #131211 */
+
+    --card: 40 33% 99%;
+    --card-foreground: 30 8% 7%;
+
+    --popover: 40 33% 99%;
+    --popover-foreground: 30 8% 7%;
+
+    --primary: 5 34% 45%; /* #98514B (accent start) */
+    --primary-foreground: 40 33% 99%;
+
+    --accent-start: 5 34% 45%; /* #98514B */
+    --accent-end: 33 92% 68%; /* #F9B764 */
+    --accent: 33 92% 68%;
+    --accent-foreground: 30 8% 7%;
+
+    --secondary: 40 12% 94%;
+    --secondary-foreground: 30 8% 12%;
+
+    --muted: 40 12% 94%;
+    --muted-foreground: 30 6% 42%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 40 33% 99%;
+
+    --border: 36 14% 88%;
+    --input: 36 14% 88%;
+    --ring: 5 34% 45%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark:root {
+    --background: 30 8% 7%; /* #131211 */
+    --foreground: 40 33% 99%; /* #FEFDFC */
+
+    --card: 24 6% 11%;
+    --card-foreground: 40 33% 99%;
+
+    --popover: 24 6% 11%;
+    --popover-foreground: 40 33% 99%;
+
+    --primary: 14 47% 55%; /* lifted terracotta for dark bg */
+    --primary-foreground: 30 8% 7%;
+
+    --accent-start: 5 34% 45%;
+    --accent-end: 33 92% 68%;
+    --accent: 33 92% 68%;
+    --accent-foreground: 30 8% 7%;
+
+    --secondary: 24 6% 16%;
+    --secondary-foreground: 40 33% 99%;
+
+    --muted: 24 5% 18%;
+    --muted-foreground: 30 6% 64%;
+
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 40 33% 99%;
+
+    --border: 24 6% 22%;
+    --input: 24 6% 22%;
+    --ring: 33 92% 68%;
+  }
 }

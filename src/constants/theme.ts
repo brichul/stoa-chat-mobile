@@ -63,3 +63,14 @@ export const Spacing = {
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
+
+/** STYLING.md palette. */
+export const Palette = {
+  black: '#131211',
+  white: '#FEFDFC',
+  accentStart: '#98514B',
+  accentEnd: '#F9B764',
+} as const;
+
+/** Accent gradient (STYLING.md: #98514B -> #F9B764), for LinearGradient `colors`. */
+export const AccentGradient = [Palette.accentStart, Palette.accentEnd] as const;

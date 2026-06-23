@@ -51,29 +51,37 @@ export default function ChatDetails() {
 
         <Row icon="info" label="Status" value={chat.status} />
         <Row icon="group" label="Participants" value={String(chat.participants.length)} />
-        <Row icon="hub" label="Attached nodes" value={String(chat.attached_nodes?.length ?? 0)} />
-        <Row icon="folder" label="Attached vaults" value={String(chat.attached_vaults?.length ?? 0)} />
+        <Row icon="data-object" label="Attached nodes" value={String(chat.attached_nodes?.length ?? 0)} />
+        <Row icon="data-array" label="Attached vaults" value={String(chat.attached_vaults?.length ?? 0)} />
 
         <Text className="text-muted-foreground px-4 pb-1 pt-5 text-xs font-semibold uppercase">
           Participants
         </Text>
-        {chat.participants.map((p) => (
-          <View key={p.id} className="flex-row items-center gap-3 px-4 py-3">
-            <View className="bg-primary/15 h-9 w-9 items-center justify-center rounded-full">
-              <Text className="text-foreground text-sm font-semibold">
-                {participantLabel(p).charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View className="flex-1">
-              <Text className="text-foreground text-base" numberOfLines={1}>
-                {participantLabel(p)}
-              </Text>
-              <Text className="text-muted-foreground text-xs">
-                {p.type} · {p.permission}
-              </Text>
-            </View>
-          </View>
-        ))}
+        {chat.participants.map((p) => {
+          const isUser = p.type === 'user';
+          return (
+            <Pressable
+              key={p.id}
+              disabled={!isUser}
+              onPress={() => router.push({ pathname: '/profile', params: { userId: p.id } })}
+              className="active:bg-secondary flex-row items-center gap-3 px-4 py-3">
+              <View className="bg-primary/15 h-9 w-9 items-center justify-center rounded-full">
+                <Text className="text-foreground text-sm font-semibold">
+                  {participantLabel(p).charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View className="flex-1">
+                <Text className="text-foreground text-base" numberOfLines={1}>
+                  {participantLabel(p)}
+                </Text>
+                <Text className="text-muted-foreground text-xs">
+                  {p.type === 'bot' ? 'agent' : p.type} · {p.permission}
+                </Text>
+              </View>
+              {isUser ? <Icon name="chevron-right" size={20} /> : null}
+            </Pressable>
+          );
+        })}
 
         <View className="gap-2 px-4 pt-6">
           <Pressable className="active:bg-secondary flex-row items-center gap-3 rounded-xl px-3 py-3">

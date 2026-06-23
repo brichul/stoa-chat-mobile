@@ -7,6 +7,7 @@ import type { Message } from '@/api/types';
 import { ChatHeader } from '@/components/chat/chat-header';
 import { MessageComposer, type Attachment } from '@/components/chat/message-composer';
 import { MessageList } from '@/components/chat/message-list';
+import { ReactionsSheet } from '@/components/chat/reactions-sheet';
 import { useWorkspace } from '@/contexts/workspace-context';
 import { CURRENT_USER_ID, MOCK_CHATS, MOCK_MESSAGES } from '@/data/mock';
 
@@ -30,16 +31,25 @@ export function ChatScreen() {
 
   const [selectedMessage, setSelectedMessage] = React.useState<Message | null>(null);
   const [selectedLayout, setSelectedLayout] = React.useState<MessageLayout | null>(null);
+  // The exact sender name the bubble rendered (undefined when it showed none),
+  // so the overlay replica mirrors the in-list bubble precisely.
+  const [selectedSenderName, setSelectedSenderName] = React.useState<string | undefined>(undefined);
 
-  const handleLongPress = (message: Message, layout: MessageLayout) => {
+  const handleLongPress = (message: Message, layout: MessageLayout, senderName?: string) => {
     setSelectedMessage(message);
     setSelectedLayout(layout);
+    setSelectedSenderName(senderName);
   };
 
   const dismissOverlay = () => {
     setSelectedMessage(null);
     setSelectedLayout(null);
+    setSelectedSenderName(undefined);
   };
+
+  // ─── Reactions breakdown sheet ────────────────────────────────────────────────
+
+  const [reactionsMessage, setReactionsMessage] = React.useState<Message | null>(null);
 
   // ─── Reply ──────────────────────────────────────────────────────────────────
 
@@ -160,6 +170,7 @@ export function ChatScreen() {
           onReact={handleReact}
           onLongPress={handleLongPress}
           onSwipeReply={handleSwipeReply}
+          onShowReactions={setReactionsMessage}
           onOpenSidebar={openSidebar}
         />
         <MessageComposer
@@ -182,8 +193,18 @@ export function ChatScreen() {
           onForward={handleForward}
           onCopy={handleCopy}
           onPin={handlePin}
+          senderName={selectedSenderName}
         />
       )}
+
+      {/* Reactions breakdown sheet */}
+      <ReactionsSheet
+        visible={reactionsMessage !== null}
+        reactions={reactionsMessage?.reactions ?? null}
+        participants={chat.participants}
+        currentActorId={CURRENT_USER_ID}
+        onClose={() => setReactionsMessage(null)}
+      />
     </View>
   );
 }

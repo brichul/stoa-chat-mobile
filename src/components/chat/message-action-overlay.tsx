@@ -1,7 +1,7 @@
 import { BlurView } from 'expo-blur';
 import { useColorScheme } from 'nativewind';
 import * as React from 'react';
-import { Dimensions, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Dimensions, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import Animated, {
   // eslint-disable-next-line deprecation/deprecation
   runOnJS,
@@ -11,12 +11,13 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import type { Message } from '@/api/types';
-import { ANIM_FAST } from '@/constants/animation';
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
+import { ANIM_FAST } from '@/constants/animation';
 import { Colors, Palette } from '@/constants/theme';
 
 import { EmojiDrawer } from './emoji-drawer';
+import { avatarColor } from './participant-avatar';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,11 @@ export interface MessageActionOverlayProps {
   onForward: () => void;
   onCopy: () => void;
   onPin: () => void;
+  /**
+   * The exact sender name the in-list bubble rendered (undefined when it showed
+   * none), so the selected replica mirrors it precisely.
+   */
+  senderName?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -52,21 +58,35 @@ const MARGIN = 10;
 
 // ─── Bubble content replica (no avatar / sender chrome) ──────────────────────
 
-function BubbleCopy({ message, isMine }: { message: Message; isMine: boolean }) {
+function BubbleCopy({
+  message,
+  isMine,
+  senderName,
+}: {
+  message: Message;
+  isMine: boolean;
+  senderName?: string;
+}) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
   return (
     <View
       style={{
         alignSelf: isMine ? 'flex-end' : 'flex-start',
-        maxWidth: '80%',
+        maxWidth: '100%',
         paddingHorizontal: 14,
         paddingVertical: 8,
-        borderRadius: 18,
         backgroundColor: isMine ? Palette.black : theme.backgroundElement,
         borderWidth: isMine ? 0 : 1,
         borderColor: '#131211',
       }}>
+      {senderName && (
+        <Text
+          style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
+          {senderName}
+        </Text>
+      )}
+
       {message.reply_to && (
         <View
           style={{
@@ -84,9 +104,31 @@ function BubbleCopy({ message, isMine }: { message: Message; isMine: boolean }) 
           </Text>
         </View>
       )}
-      <Text style={{ color: isMine ? Palette.white : theme.text, fontSize: 16, lineHeight: 20 }}>
-        {message.content}
-      </Text>
+      {/*
+        Rendered as a read-only TextInput rather than <Text selectable> so iOS
+        gives real selection — drag handles + partial highlight. A plain Text
+        only exposes a "Copy everything" callout with no granular selection.
+      */}
+      <TextInput
+        value={message.content}
+        editable={false}
+        multiline
+        scrollEnabled={false}
+        className='text-base font-sans leading-5'
+        // Android only allows selection on editable inputs; keep it editable
+        // there but suppress the keyboard/caret so it reads as static text.
+        {...(Platform.OS === 'android'
+          ? { editable: true, showSoftInputOnFocus: false, caretHidden: true }
+          : null)}
+        style={{
+          // fontSize: 16,
+          // lineHeight: 20,
+          padding: 0,
+          margin: 0,
+          color: isMine ? Palette.white : theme.text,
+          ...(Platform.OS === 'android' ? { includeFontPadding: false, textAlignVertical: 'top' } : null),
+        }}
+      />
     </View>
   );
 }
@@ -232,6 +274,7 @@ export function MessageActionOverlay({
   onForward,
   onCopy,
   onPin,
+  senderName,
 }: MessageActionOverlayProps) {
   const { colorScheme } = useColorScheme();
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -298,43 +341,45 @@ export function MessageActionOverlay({
         onRequestClose={startDismiss}
         statusBarTranslucent>
         <Animated.View style={[StyleSheet.absoluteFill, fadeStyle]}>
+          {/* Blurred backdrop + tap-outside-to-dismiss. Kept as its own layer so
+              the interactive content below isn't nested inside the BlurView —
+              text selection handles/loupe don't work for Text inside expo-blur. */}
           <BlurView
             intensity={28}
             tint={colorScheme === 'dark' ? 'dark' : 'light'}
             style={StyleSheet.absoluteFill}>
-            {/* Tap outside to dismiss */}
             <Pressable style={StyleSheet.absoluteFill} onPress={startDismiss} />
-
-            {/* Emoji reaction strip */}
-            <QuickEmojiStrip
-              style={{ position: 'absolute', top: emojiTop, left: emojiLeft }}
-              onReact={(emoji) => {
-                onReact(emoji);
-                startDismiss();
-              }}
-              onOpenDrawer={() => setDrawerOpen(true)}
-            />
-
-            {/* Bubble replica at its original position */}
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                top: layout.y,
-                left: layout.x,
-                width: layout.width,
-                height: layout.height,
-                justifyContent: 'center',
-              }}>
-              <BubbleCopy message={message} isMine={isMine} />
-            </View>
-
-            {/* Action menu */}
-            <ActionMenu
-              items={actions}
-              style={{ position: 'absolute', top: actionTop, left: actionLeft, width: 200 }}
-            />
           </BlurView>
+
+          {/* Emoji reaction strip */}
+          <QuickEmojiStrip
+            style={{ position: 'absolute', top: emojiTop, left: emojiLeft }}
+            onReact={(emoji) => {
+              onReact(emoji);
+              startDismiss();
+            }}
+            onOpenDrawer={() => setDrawerOpen(true)}
+          />
+
+          {/* Bubble replica at its original position — selectable so the selected
+              message's text can be highlighted/copied in place. */}
+          <View
+            style={{
+              position: 'absolute',
+              top: layout.y,
+              left: layout.x,
+              width: layout.width,
+              height: layout.height,
+              justifyContent: 'center',
+            }}>
+            <BubbleCopy message={message} isMine={isMine} senderName={senderName} />
+          </View>
+
+          {/* Action menu */}
+          <ActionMenu
+            items={actions}
+            style={{ position: 'absolute', top: actionTop, left: actionLeft, width: 200 }}
+          />
         </Animated.View>
       </Modal>
 

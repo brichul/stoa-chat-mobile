@@ -7,8 +7,10 @@ import Animated, {
   // eslint-disable-next-line deprecation/deprecation
   runOnJS,
   type SharedValue,
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
+  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -20,14 +22,14 @@ import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
 import { Colors, Palette } from '@/constants/theme';
 
-import { ParticipantAvatar, participantLabel } from './participant-avatar';
+import { avatarColor, ParticipantAvatar, participantLabel } from './participant-avatar';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
 const AVATAR_SIZE = 28;
 const AVATAR_SPACE = AVATAR_SIZE + 8;
-const FULL_R = 18;
-const FLAT_R = 4;
+const FULL_R = 0;
+const FLAT_R = 0;
 const REPLY_THRESHOLD = 60; // drag distance that fires the reply callback
 const MAX_DRAG = 80;        // maximum bubble translation
 
@@ -64,7 +66,7 @@ function SystemPill({ message }: { message: Message }) {
   const icon: IconName = SYSTEM_ICONS[message.type] ?? 'info';
   return (
     <View className="my-2 items-center px-4">
-      <View className="bg-secondary flex-row items-center gap-1.5 rounded-2xl px-3 py-1.5">
+      <View className="bg-secondary flex-row items-center gap-1.5 px-3 py-1.5">
         <Icon name={icon} size={11} color={theme.textSecondary} />
         <Text className="text-muted-foreground text-xs">{message.content}</Text>
       </View>
@@ -77,15 +79,14 @@ function SystemPill({ message }: { message: Message }) {
 function ReactionsRow({
   reactions,
   currentActorId,
-  messageId,
   isMine,
-  onReact,
+  onShowReactions,
 }: {
   reactions: Record<string, string[]>;
   currentActorId: string;
-  messageId: string;
   isMine: boolean;
-  onReact?: (messageId: string, emoji: string) => void;
+  /** Tapping any pill opens the read-only breakdown of who reacted with what. */
+  onShowReactions?: () => void;
 }) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
@@ -100,7 +101,7 @@ function ReactionsRow({
         return (
           <Pressable
             key={emoji}
-            onPress={() => onReact?.(messageId, emoji)}
+            onPress={onShowReactions}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -130,8 +131,15 @@ function ReactionsRow({
 
 // ─── Read receipts ────────────────────────────────────────────────────────────
 
-function ReadReceipts({ readBy }: { readBy: Participant[] }) {
+function ReadReceipts({ readBy, isGroup }: { readBy: Participant[]; isGroup: boolean }) {
   if (!readBy.length) return null;
+
+  // 1-on-1: there's only ever one other reader, so a stack of avatars is noise —
+  // show a plain "Read" label under the last seen message instead.
+  if (!isGroup) {
+    return <Text className="text-muted-foreground text-[11px]">Read</Text>;
+  }
+
   return (
     <View className="flex-row items-center" style={{ gap: -2 }}>
       {readBy.slice(0, 5).map((p) => (
@@ -150,10 +158,16 @@ function BubbleContent({
   message,
   isMine,
   radius,
+  senderName,
+  onPressReply,
 }: {
   message: Message;
   isMine: boolean;
   radius: ReturnType<typeof bubbleRadius>;
+  /** Group chats: name of the sender, shown inside the first bubble of a group. */
+  senderName?: string;
+  /** Tapping the inline reply snippet jumps to the original message. */
+  onPressReply?: (replyToId: string) => void;
 }) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
@@ -166,6 +180,13 @@ function BubbleContent({
           ? { backgroundColor: Palette.black }
           : { backgroundColor: theme.backgroundElement, borderWidth: 1, borderColor: '#131211' },
       ]}>
+      {senderName && (
+        <Text
+          style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
+          {senderName}
+        </Text>
+      )}
+
       {message.is_forwarded && (
         <View className="mb-1 flex-row items-center gap-1">
           <Icon name="forward" size={12} color={isMine ? '#aaa' : theme.textSecondary} />
@@ -176,7 +197,8 @@ function BubbleContent({
       )}
 
       {message.reply_to && (
-        <View
+        <Pressable
+          onPress={() => message.reply_to && onPressReply?.(message.reply_to.id)}
           style={{
             borderLeftWidth: 2,
             borderLeftColor: Palette.accentStart,
@@ -190,13 +212,15 @@ function BubbleContent({
           </Text>
           <Text
             style={{ fontSize: 12, color: isMine ? '#bbb' : theme.textSecondary }}
-            numberOfLines={2}>
+            numberOfLines={1}>
             {message.reply_to.content}
           </Text>
-        </View>
+        </Pressable>
       )}
 
-      <Text className="text-base leading-5" style={{ color: isMine ? Palette.white : theme.text }}>
+      <Text
+        className="text-base leading-5"
+        style={{ color: isMine ? Palette.white : theme.text }}>
         {message.content}
       </Text>
     </View>
@@ -223,10 +247,16 @@ export interface MessageRowProps {
   currentActorId: string;
   /** Shared value from MessageList — opacity 0→1 for all timestamps simultaneously. */
   showTimestamps: SharedValue<number>;
+  /** Carries the id of the message that should briefly flash (reply jump target). */
+  highlightedId: SharedValue<string | null>;
   onReact?: (messageId: string, emoji: string) => void;
-  onLongPress?: (message: Message, layout: MessageLayout) => void;
+  onLongPress?: (message: Message, layout: MessageLayout, senderName?: string) => void;
   /** Fired when the user swipes this bubble past the reply threshold. */
   onSwipeReply?: (message: Message) => void;
+  /** Tap a reaction pill → open the read-only breakdown of who reacted. */
+  onShowReactions?: (message: Message) => void;
+  /** Tap the inline reply snippet → jump to the original message. */
+  onPressReply?: (replyToId: string) => void;
 }
 
 export function MessageRow({
@@ -239,9 +269,12 @@ export function MessageRow({
   readBy,
   currentActorId,
   showTimestamps,
+  highlightedId,
   onReact,
   onLongPress,
   onSwipeReply,
+  onShowReactions,
+  onPressReply,
 }: MessageRowProps) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
@@ -250,10 +283,12 @@ export function MessageRow({
   const replyDrag = useSharedValue(0);
   const hasTriggered = useSharedValue(false);
 
-  // Combine right-swipe reply drag (positive) and left-swipe timestamp reveal (negative)
-  // so both gestures drive the same bubble translation.
+  // "mine" bubbles slide left to reveal the timestamp (right side has room).
+  // "others" bubbles stay put — they're near the left edge and would go off-screen.
   const bubbleAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: replyDrag.value - showTimestamps.value * 80 }],
+    transform: [{ translateX: isMine
+      ? replyDrag.value - showTimestamps.value * 80
+      : replyDrag.value }],
   }));
 
   const replyIconAnimStyle = useAnimatedStyle(() => ({
@@ -276,10 +311,11 @@ export function MessageRow({
     onSwipeReplyRef.current?.(messageRef.current);
   }, []);
 
+  // Right swipe ≥8px → reply.
   const replyPan = React.useMemo(
     () =>
       Gesture.Pan()
-        .activeOffsetX([8, 999])
+        .activeOffsetX(8)
         .failOffsetY([-12, 12])
         .onBegin(() => {
           hasTriggered.value = false;
@@ -296,15 +332,82 @@ export function MessageRow({
           replyDrag.value = withTiming(0, ANIM_FAST);
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [] // gesture created once; refs keep callbacks fresh
+    [] // refs keep callbacks fresh; no recreate needed
   );
+
+  // Left swipe ≥8px → reveal timestamps for all bubbles via shared value.
+  const tsPan = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX(-8)
+        .failOffsetY([-12, 12])
+        .onUpdate((e) => {
+          showTimestamps.value = Math.min(1, Math.abs(e.translationX) / 80);
+        })
+        .onEnd(() => {
+          showTimestamps.value = withTiming(0, ANIM_FAST);
+        }),
+    [showTimestamps]
+  );
+
+  // ── Double-tap to heart ─────────────────────────────────────────────────────
+  const onReactRef = React.useRef(onReact);
+  onReactRef.current = onReact;
+  const heart = React.useCallback(() => {
+    onReactRef.current?.(messageRef.current.id, '❤️');
+  }, []);
+
+  const doubleTap = React.useMemo(
+    () =>
+      Gesture.Tap()
+        .numberOfTaps(2)
+        .maxDuration(300)
+        .onEnd((_e, success) => {
+          if (success) {
+            // eslint-disable-next-line deprecation/deprecation
+            runOnJS(heart)();
+          }
+        }),
+    [heart]
+  );
+
+  // Race: first to reach its activation threshold wins; the other is cancelled.
+  const bubbleGesture = React.useMemo(
+    () => Gesture.Race(replyPan, tsPan, doubleTap),
+    [replyPan, tsPan, doubleTap]
+  );
+
+  // ── Reply-jump highlight flash ──────────────────────────────────────────────
+  const flash = useSharedValue(0);
+  useAnimatedReaction(
+    () => highlightedId.value,
+    (cur) => {
+      if (cur === message.id) {
+        flash.value = withSequence(
+          withTiming(1, { duration: 150 }),
+          withTiming(0, { duration: 700 })
+        );
+      }
+    }
+  );
+  const flashStyle = useAnimatedStyle(() => ({
+    backgroundColor: `rgba(152,81,75,${0.18 * flash.value})`,
+  }));
+
+  // Sender name lives inside the first bubble of a group (others only). Computed
+  // here so the long-press handler can hand the overlay the exact same value,
+  // keeping the selected replica an exact mirror of the in-list bubble.
+  const senderName =
+    isFirstInGroup && isGroup && !isMine && participant
+      ? participantLabel(participant)
+      : undefined;
 
   // ── Long-press for overlay ──────────────────────────────────────────────────
   const bubbleRef = React.useRef<View>(null);
 
   const handleLongPress = () => {
     bubbleRef.current?.measureInWindow((x, y, width, height) => {
-      onLongPress?.(message, { x, y, width, height });
+      onLongPress?.(message, { x, y, width, height }, senderName);
     });
   };
 
@@ -316,9 +419,13 @@ export function MessageRow({
   const radius = bubbleRadius(isMine, isFirstInGroup, isLastInGroup);
   const topGap = isFirstInGroup ? 6 : 2;
 
+  // Group chats reserve a gutter on the left for the sender avatar; 1-on-1 chats
+  // have no avatar, so the bubble hugs the edge with only a small inset.
+  const gutter = isGroup ? AVATAR_SPACE : 12;
+
   // Reply icon sits at the left edge of the content area (left of bubble for others,
   // left gutter of screen for mine — revealed as the bubble slides right).
-  const replyIconLeft = !isMine ? AVATAR_SPACE : 4;
+  const replyIconLeft = !isMine ? gutter : 4;
 
   return (
     <View style={{ marginTop: topGap }}>
@@ -326,7 +433,7 @@ export function MessageRow({
       {message.is_pinned && (
         <View
           style={{
-            paddingLeft: !isMine ? AVATAR_SPACE + 4 : 0,
+            paddingLeft: !isMine ? gutter + 4 : 0,
             paddingRight: isMine ? 12 : 0,
             flexDirection: 'row',
             justifyContent: isMine ? 'flex-end' : 'flex-start',
@@ -339,28 +446,13 @@ export function MessageRow({
         </View>
       )}
 
-      {/* Sender name */}
-      {isFirstInGroup && isGroup && !isMine && participant && (
-        <Text
-          className="text-muted-foreground text-[11px]"
-          style={{ marginLeft: AVATAR_SPACE + 4, marginBottom: 2 }}>
-          {participantLabel(participant)}
-        </Text>
-      )}
-
-      {/* Row: swipeable content + absolutely-positioned overlays */}
-      <View style={{ position: 'relative' }}>
-        {/* Timestamp — fades in globally when list is swiped left */}
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            { position: 'absolute', right: 10, top: 0, bottom: 0, justifyContent: 'center' },
-            tsAnimStyle,
-          ]}>
-          <Text className="text-muted-foreground text-[11px]">{formatTime(message.timestamp)}</Text>
-        </Animated.View>
-
-        {/* Reply icon — revealed behind the bubble as it slides right */}
+      {/*
+        Bubble row only — position:relative spans ONLY the bubble height so the
+        absolute timestamp aligns with the bubble, not reactions/read-receipts.
+        The flash layer paints behind the bubble when it's a reply-jump target.
+      */}
+      <Animated.View style={[{ position: 'relative' }, flashStyle]}>
+        {/* Reply icon revealed as bubble slides right */}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -370,54 +462,64 @@ export function MessageRow({
           <Icon name="reply" size={20} color={theme.textSecondary} />
         </Animated.View>
 
-        {/* Swipeable bubble row */}
-        <GestureDetector gesture={replyPan}>
+        {/* Timestamp: right edge of screen, vertically centered to bubble height */}
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            { position: 'absolute', right: 8, top: 0, bottom: 0, justifyContent: 'center' },
+            tsAnimStyle,
+          ]}>
+          <Text className="text-muted-foreground text-[11px]">{formatTime(message.timestamp)}</Text>
+        </Animated.View>
+
+        {/* Race: right-swipe → reply; left-swipe → timestamps; double-tap → heart */}
+        <GestureDetector gesture={bubbleGesture}>
           <Animated.View style={bubbleAnimStyle}>
             <View className="flex-row items-end">
-              {/* Avatar gutter */}
               {!isMine && (
-                <View style={{ width: AVATAR_SPACE, alignItems: 'flex-end', paddingRight: 8 }}>
+                <View style={{ width: gutter, alignItems: 'flex-end', paddingRight: 8 }}>
                   {isLastInGroup && isGroup && participant && (
                     <ParticipantAvatar participant={participant} size={AVATAR_SIZE} />
                   )}
                 </View>
               )}
-
-              {/* Content column */}
               <View style={{ flex: 1, alignItems: isMine ? 'flex-end' : 'flex-start' }}>
-                <Pressable
-                  ref={bubbleRef}
-                  onLongPress={handleLongPress}
-                  delayLongPress={350}>
-                  <BubbleContent message={message} isMine={isMine} radius={radius} />
-                </Pressable>
-
-                {/* Reactions */}
-                {message.reactions && Object.keys(message.reactions).length > 0 && (
-                  <ReactionsRow
-                    reactions={message.reactions}
-                    currentActorId={currentActorId}
-                    messageId={message.id}
+                <Pressable ref={bubbleRef} onLongPress={handleLongPress} delayLongPress={350}>
+                  <BubbleContent
+                    message={message}
                     isMine={isMine}
-                    onReact={onReact}
+                    radius={radius}
+                    senderName={senderName}
+                    onPressReply={onPressReply}
                   />
-                )}
-
-                {/* Read receipts */}
-                {isLastInGroup && readBy.length > 0 && (
-                  <View
-                    className="mt-0.5 flex-row items-center gap-1"
-                    style={{ justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
-                    <ReadReceipts readBy={readBy} />
-                  </View>
-                )}
+                </Pressable>
               </View>
-
               {!isMine && <View style={{ width: 12 }} />}
             </View>
           </Animated.View>
         </GestureDetector>
-      </View>
+      </Animated.View>
+
+      {/* Reactions — outside the relative container so they don't affect timestamp height */}
+      {message.reactions && Object.keys(message.reactions).length > 0 && (
+        <View style={{ paddingLeft: !isMine ? gutter + 4 : 0, paddingRight: isMine ? 12 : 0 }}>
+          <ReactionsRow
+            reactions={message.reactions}
+            currentActorId={currentActorId}
+            isMine={isMine}
+            onShowReactions={() => onShowReactions?.(message)}
+          />
+        </View>
+      )}
+
+      {/* Read receipts — same reasoning */}
+      {isLastInGroup && readBy.length > 0 && (
+        <View
+          className="mt-0.5 flex-row items-center gap-1"
+          style={{ paddingLeft: !isMine ? gutter + 4 : 0, justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
+          <ReadReceipts readBy={readBy} isGroup={isGroup} />
+        </View>
+      )}
     </View>
   );
 }

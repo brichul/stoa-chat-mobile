@@ -4,6 +4,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   // eslint-disable-next-line deprecation/deprecation
   runOnJS,
+  type SharedValue,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -120,7 +121,7 @@ function buildListItems(
 function DateHeader({ label }: { label: string }) {
   return (
     <View className="my-3 items-center">
-      <View className="bg-secondary rounded-2xl px-3 py-1">
+      <View className="bg-secondary px-3 py-1">
         <Text className="text-muted-foreground text-[11px] font-semibold">{label}</Text>
       </View>
     </View>
@@ -134,9 +135,11 @@ export interface MessageListProps {
   currentActorId: string;
   participants: Participant[];
   onReact?: (messageId: string, emoji: string) => void;
-  onLongPress?: (message: Message, layout: MessageLayout) => void;
+  onLongPress?: (message: Message, layout: MessageLayout, senderName?: string) => void;
   /** Fired when a message bubble is swiped right past the reply threshold. */
   onSwipeReply?: (message: Message) => void;
+  /** Tapping a reaction pill → open the read-only breakdown of who reacted. */
+  onShowReactions?: (message: Message) => void;
   /** Called when the user swipes right from the left edge of the chat area. */
   onOpenSidebar?: () => void;
 }
@@ -148,6 +151,7 @@ export function MessageList({
   onReact,
   onLongPress,
   onSwipeReply,
+  onShowReactions,
   onOpenSidebar,
 }: MessageListProps) {
   const listRef = React.useRef<FlatList<ListItem>>(null);
@@ -161,6 +165,25 @@ export function MessageList({
 
   // ── Shared animated value: drives timestamp reveal across all rows ──────────
   const showTimestamps = useSharedValue(0);
+
+  // ── Reply-jump: scroll to the original message and flash it ──────────────────
+  const highlightedId = useSharedValue<string | null>(null);
+
+  const scrollToMessage = React.useCallback(
+    (messageId: string) => {
+      const index = items.findIndex(
+        (it) => it.kind === 'message' && it.message.id === messageId
+      );
+      if (index < 0) return; // target not in the loaded window
+      listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
+      // Let the scroll settle before flashing so it lands in view.
+      highlightedId.value = null;
+      setTimeout(() => {
+        highlightedId.value = messageId;
+      }, 250);
+    },
+    [items, highlightedId]
+  );
 
   // Track where the touch began (to restrict sidebar gesture to left edge).
   const gestureStartX = useSharedValue(0);
@@ -222,6 +245,13 @@ export function MessageList({
             keyExtractor={(item) => item.key}
             contentContainerStyle={{ paddingVertical: 8 }}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+            onScrollToIndexFailed={({ index }) => {
+              // No getItemLayout, so a distant index can fail; nudge then retry.
+              listRef.current?.scrollToOffset({ offset: index * 64, animated: true });
+              setTimeout(() => {
+                listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
+              }, 120);
+            }}
             renderItem={({ item }) => {
               if (item.kind === 'date') {
                 return <DateHeader label={item.label} />;
@@ -237,9 +267,12 @@ export function MessageList({
                   readBy={item.readBy}
                   currentActorId={currentActorId}
                   showTimestamps={showTimestamps}
+                  highlightedId={highlightedId}
                   onReact={onReact}
                   onLongPress={onLongPress}
                   onSwipeReply={onSwipeReply}
+                  onShowReactions={onShowReactions}
+                  onPressReply={scrollToMessage}
                 />
               );
             }}

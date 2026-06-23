@@ -213,7 +213,7 @@ export function Sidebar() {
             onChangeText={setQuery}
             placeholder="Search"
             placeholderTextColor={MUTED}
-            className="flex-1 py-2.5"
+            className="font-sans flex-1 py-2.5"
             style={{ color: FG }}
           />
         </View>

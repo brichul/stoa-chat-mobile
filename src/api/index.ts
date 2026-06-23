@@ -6,6 +6,7 @@ export * as chatsApi from './chats';
 export * as nodesApi from './nodes';
 export * as vaultsApi from './vaults';
 export * as searchApi from './search';
+export * as profileApi from './profile';
 export * as ingestApi from './ingest';
 export { ChatSocket } from './chat-socket';
 export type { ChatSocketStatus } from './chat-socket';

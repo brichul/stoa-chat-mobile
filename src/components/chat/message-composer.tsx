@@ -6,7 +6,7 @@ import { Pressable, TextInput, View } from 'react-native';
 import type { Message } from '@/api/types';
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
-import { Colors } from '@/constants/theme';
+import { Colors, Fonts } from '@/constants/theme';
 import { cn } from '@/lib/utils';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -112,7 +112,7 @@ export function MessageComposer({
             placeholder={placeholder}
             placeholderTextColor={theme.textSecondary}
             multiline
-            style={{ height, lineHeight: LINE_HEIGHT, color: theme.text, paddingVertical: VERTICAL_PADDING / 2 }}
+            style={{ height, lineHeight: LINE_HEIGHT, color: theme.text, fontFamily: Fonts.sans, paddingVertical: VERTICAL_PADDING / 2 }}
             onContentSizeChange={(e) =>
               setHeight(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, e.nativeEvent.contentSize.height)))
             }

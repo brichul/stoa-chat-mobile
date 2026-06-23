@@ -26,30 +26,19 @@ export const Colors = {
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
-export const Fonts = Platform.select({
-  ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
-    rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
-    mono: 'ui-monospace',
-  },
-  default: {
-    sans: 'normal',
-    serif: 'serif',
-    rounded: 'normal',
-    mono: 'monospace',
-  },
-  web: {
-    sans: 'var(--font-display)',
-    serif: 'var(--font-serif)',
-    rounded: 'var(--font-rounded)',
-    mono: 'var(--font-mono)',
-  },
-});
+/**
+ * The Stoa typefaces, loaded via expo-font in src/hooks/use-fonts.ts. These
+ * family names match the loaded fonts and the `fontFamily` tokens in
+ * tailwind.config.js, so `Fonts.sans` is the same Inter_Stoa face the themed
+ * `Text` component renders. There is no dedicated rounded face — it falls back
+ * to the sans face rather than the system default.
+ */
+export const Fonts = {
+  sans: 'Inter_Stoa',
+  serif: 'Instrument_Serif',
+  rounded: 'Inter_Stoa',
+  mono: 'Fragment_Mono',
+} as const;
 
 export const Spacing = {
   half: 2,

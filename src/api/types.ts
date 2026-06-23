@@ -133,6 +133,46 @@ export interface Vault {
   description?: string;
 }
 
+/** Public-facing user info — what GET /v1/users/:id/profile exposes. */
+export interface PublicProfile {
+  id: string;
+  username?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  created_at?: string;
+}
+
+/** Public subset of a bot owned by a user. */
+export interface PublicBot {
+  id: string;
+  name?: string;
+  display_name?: string | null;
+  description?: string | null;
+  avatar_url?: string | null;
+  expertise_tags?: string[];
+  availability_status?: string;
+  reputation_score?: number;
+  model_tier?: string;
+  created_at?: string;
+}
+
+/** Public vault surfaced on a user's profile. */
+export interface PublicVault {
+  id: string;
+  name?: string;
+  type?: string;
+  description?: string | null;
+  node_count?: number;
+  created_at?: string;
+}
+
+/** Response shape of GET /v1/users/:id/profile. */
+export interface UserProfile {
+  profile: PublicProfile;
+  bots: PublicBot[];
+  vaults: PublicVault[];
+}
+
 export interface SearchResult {
   node_id: string;
   title: string;

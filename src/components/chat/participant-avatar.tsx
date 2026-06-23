@@ -27,11 +27,35 @@ export function ParticipantAvatar({
 }) {
   const initial = participantLabel(participant).charAt(0).toUpperCase();
   const bg = avatarColor(participant.id);
+
+  // When there's no avatar URL we render the colored initial directly rather
+  // than relying on the primitive's image-load status to reveal the fallback —
+  // that status can settle on a non-error state and leave nothing painted.
+  if (!participant.avatar_url) {
+    return (
+      <View
+        style={[
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: bg,
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+          },
+          style,
+        ]}>
+        <Text style={{ color: '#fff', fontSize: size * 0.42, fontWeight: '600' }}>{initial}</Text>
+      </View>
+    );
+  }
+
   return (
     <Avatar
       alt={initial}
       style={[{ width: size, height: size, borderRadius: size / 2 }, style]}>
-      {participant.avatar_url ? <AvatarImage source={{ uri: participant.avatar_url }} /> : null}
+      <AvatarImage source={{ uri: participant.avatar_url }} />
       <AvatarFallback style={{ backgroundColor: bg }}>
         <Text style={{ color: '#fff', fontSize: size * 0.42, fontWeight: '600' }}>{initial}</Text>
       </AvatarFallback>

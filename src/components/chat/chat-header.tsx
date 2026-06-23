@@ -77,11 +77,11 @@ export function ChatHeader({ chat, onPressMenu, onPressTitle }: ChatHeaderProps)
             <DropdownMenuLabel>Add to chat</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onPress={() => {}}>
-              <Icon name="hub" size={16} />
+              <Icon name="data-object" size={16} />
               <DropdownMenuItemTitle>Add node</DropdownMenuItemTitle>
             </DropdownMenuItem>
             <DropdownMenuItem onPress={() => {}}>
-              <Icon name="folder" size={16} />
+              <Icon name="data-array" size={16} />
               <DropdownMenuItemTitle>Add vault</DropdownMenuItemTitle>
             </DropdownMenuItem>
           </DropdownMenuContent>

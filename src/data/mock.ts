@@ -1,4 +1,4 @@
-import type { Chat, Message } from '@/api/types';
+import type { Chat, Message, UserProfile } from '@/api/types';
 
 /**
  * Placeholder data for the scaffold. Swap these for the real API
@@ -103,7 +103,7 @@ export const MOCK_CHATS: Chat[] = [
         permission: 'write',
         display_name: 'Lin',
         avatar_url: null,
-        last_read_message_id: null,
+        last_read_message_id: 'g7',
       },
       {
         id: 'user_sam',
@@ -111,7 +111,7 @@ export const MOCK_CHATS: Chat[] = [
         permission: 'write',
         display_name: 'Sam',
         avatar_url: null,
-        last_read_message_id: null,
+        last_read_message_id: 'g7',
       },
     ],
     attached_nodes: [],
@@ -152,6 +152,13 @@ export const MOCK_MESSAGES: Record<string, Message[]> = {
       sender_name: 'You',
       content: 'Scaffolding it right now. Swipe right opens the sidebar, swipe left flips to the AI view.',
       timestamp: now - HOUR - 540_000,
+      reply_to_id: 'm1',
+      reply_to: {
+        id: 'm1',
+        sender_id: 'user_amir',
+        sender_name: 'Amir',
+        content: 'Hey — did the new sidebar layout land?',
+      },
     },
     {
       id: 'm3',
@@ -194,8 +201,213 @@ export const MOCK_MESSAGES: Record<string, Message[]> = {
       timestamp: now - 5 * HOUR,
     },
   ],
-  chat_3: [],
+  chat_3: [
+    {
+      id: 'sys_lin_join',
+      type: 'join',
+      sender_id: 'user_sam',
+      sender_type: 'user',
+      sender_name: 'Sam',
+      content: 'Sam joined the conversation',
+      timestamp: now - 4 * HOUR,
+    },
+    {
+      id: 'g1',
+      type: 'message',
+      sender_id: 'user_lin',
+      sender_type: 'user',
+      sender_name: 'Lin',
+      content: 'Morning! I just pushed the new onboarding checklist to the vault.',
+      timestamp: now - 3 * HOUR,
+      is_pinned: true,
+    },
+    {
+      id: 'g2',
+      type: 'message',
+      sender_id: 'user_lin',
+      sender_type: 'user',
+      sender_name: 'Lin',
+      content: 'Section 3 still needs a security review though.',
+      timestamp: now - 3 * HOUR + 30_000,
+    },
+    {
+      id: 'g3',
+      type: 'message',
+      sender_id: 'user_sam',
+      sender_type: 'user',
+      sender_name: 'Sam',
+      content: 'Nice — I can take the security section.',
+      timestamp: now - 3 * HOUR + 300_000,
+      reactions: { '👍': ['user_lin', CURRENT_USER_ID] },
+    },
+    {
+      id: 'g4',
+      type: 'message',
+      sender_id: CURRENT_USER_ID,
+      sender_type: 'user',
+      sender_name: 'You',
+      content: 'Thanks Sam. Lin — is this the checklist in the Onboarding vault?',
+      timestamp: now - 3 * HOUR + 480_000,
+      reply_to_id: 'g1',
+      reply_to: {
+        id: 'g1',
+        sender_id: 'user_lin',
+        sender_name: 'Lin',
+        content: 'Morning! I just pushed the new onboarding checklist to the vault.',
+      },
+    },
+    {
+      id: 'g5',
+      type: 'message',
+      sender_id: 'user_lin',
+      sender_type: 'user',
+      sender_name: 'Lin',
+      content: 'Yep, that one. Pinned it up top so it’s easy to find.',
+      timestamp: now - 3 * HOUR + 540_000,
+    },
+    {
+      id: 'g6',
+      type: 'message',
+      sender_id: 'user_sam',
+      sender_type: 'user',
+      sender_name: 'Sam',
+      content: 'Pushed a first pass at the security steps — let me know what you think.',
+      timestamp: now - 3 * HOUR + 2_400_000,
+      reactions: { '🔥': [CURRENT_USER_ID, 'user_lin'], '❤️': ['user_lin'] },
+    },
+    {
+      id: 'g7',
+      type: 'message',
+      sender_id: CURRENT_USER_ID,
+      sender_type: 'user',
+      sender_name: 'You',
+      content: 'Looks great. Merging it in now.',
+      timestamp: now - 3 * HOUR + 2_700_000,
+    },
+  ],
 };
+
+/**
+ * Mock public profiles keyed by user id. The profile screen reads from here
+ * instead of the backend for now (see src/app/profile.tsx). The real contract
+ * lives in src/api/profile.ts (GET /v1/users/:id/profile).
+ */
+export const MOCK_PROFILES: Record<string, UserProfile> = {
+  user_amir: {
+    profile: {
+      id: 'user_amir',
+      username: 'amir',
+      display_name: 'Amir Haddad',
+      avatar_url: null,
+      created_at: new Date(now - 400 * 24 * HOUR).toISOString(),
+    },
+    bots: [
+      {
+        id: 'bot_atlas',
+        name: 'Atlas',
+        display_name: 'Atlas',
+        description: 'Maps and maintains the company knowledge graph ontology.',
+        avatar_url: null,
+        expertise_tags: ['ontology', 'graph-cleanup', 'research'],
+        availability_status: 'available',
+        reputation_score: 1280,
+        model_tier: 'smartest',
+        created_at: new Date(now - 300 * 24 * HOUR).toISOString(),
+      },
+      {
+        id: 'bot_scout',
+        name: 'Scout',
+        display_name: 'Scout',
+        description: 'Finds and links orphaned nodes across vaults.',
+        avatar_url: null,
+        expertise_tags: ['discovery', 'linking'],
+        availability_status: 'busy',
+        reputation_score: 540,
+        model_tier: 'everyday',
+        created_at: new Date(now - 120 * 24 * HOUR).toISOString(),
+      },
+    ],
+    vaults: [
+      {
+        id: 'vault_q3',
+        name: 'Q3 Research',
+        type: 'public',
+        description: 'Shared research notes and ontology drafts for Q3.',
+        node_count: 142,
+        created_at: new Date(now - 90 * 24 * HOUR).toISOString(),
+      },
+      {
+        id: 'vault_ontology',
+        name: 'Core Ontology',
+        type: 'public',
+        description: 'The canonical entity and relationship definitions.',
+        node_count: 67,
+        created_at: new Date(now - 250 * 24 * HOUR).toISOString(),
+      },
+    ],
+  },
+  user_lin: {
+    profile: {
+      id: 'user_lin',
+      username: 'lin',
+      display_name: 'Lin Wei',
+      avatar_url: null,
+      created_at: new Date(now - 210 * 24 * HOUR).toISOString(),
+    },
+    bots: [
+      {
+        id: 'bot_onboard',
+        name: 'Onboarder',
+        display_name: 'Onboarder',
+        description: 'Walks new hires through the onboarding docs.',
+        avatar_url: null,
+        expertise_tags: ['onboarding', 'docs'],
+        availability_status: 'available',
+        reputation_score: 310,
+        model_tier: 'everyday',
+        created_at: new Date(now - 100 * 24 * HOUR).toISOString(),
+      },
+    ],
+    vaults: [
+      {
+        id: 'vault_onboarding',
+        name: 'Onboarding',
+        type: 'public',
+        description: 'Everything a new hire needs in their first week.',
+        node_count: 38,
+        created_at: new Date(now - 180 * 24 * HOUR).toISOString(),
+      },
+    ],
+  },
+  user_sam: {
+    profile: {
+      id: 'user_sam',
+      username: 'sam',
+      display_name: 'Sam Okafor',
+      avatar_url: null,
+      created_at: new Date(now - 60 * 24 * HOUR).toISOString(),
+    },
+    bots: [],
+    vaults: [],
+  },
+};
+
+/** Falls back to a minimal generated profile for any unknown user id. */
+export function getMockProfile(userId: string): UserProfile {
+  return (
+    MOCK_PROFILES[userId] ?? {
+      profile: {
+        id: userId,
+        username: userId.replace(/^user_/, ''),
+        display_name: null,
+        avatar_url: null,
+        created_at: new Date(now - 30 * 24 * HOUR).toISOString(),
+      },
+      bots: [],
+      vaults: [],
+    }
+  );
+}
 
 export const MOCK_AI_MESSAGES: Message[] = [
   {

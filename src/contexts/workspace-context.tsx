@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import type { Chat } from '@/api/types';
+
 /**
  * Coordinates the surfaces that share the main screen:
  *  - the sidebar drawer (swipe right / toggle button)
@@ -8,8 +10,10 @@ import * as React from 'react';
  * The Workspace component supplies the implementation.
  */
 export interface WorkspaceContextValue {
+  activeChat: Chat | null;
+  /** Convenience derived field — same as activeChat?.id ?? null. */
   activeChatId: string | null;
-  setActiveChatId: (id: string | null) => void;
+  setActiveChat: (chat: Chat | null) => void;
 
   isGraphOpen: boolean;
 

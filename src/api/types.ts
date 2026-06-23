@@ -76,6 +76,13 @@ export interface Mention {
   type: ActorType;
 }
 
+export interface MessageReplySnippet {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  content: string;
+}
+
 export interface Message {
   id: string;
   type: 'message' | 'system' | string;
@@ -88,6 +95,14 @@ export interface Message {
   timestamp: number;
   reactions?: Record<string, string[]>;
   is_pinned?: boolean;
+  /** Set when this message is a reply. */
+  reply_to_id?: string | null;
+  /** Inline snippet of the replied-to message (populated by the API). */
+  reply_to?: MessageReplySnippet | null;
+  /** True when this message was forwarded from another chat. */
+  is_forwarded?: boolean;
+  forwarded_from_chat_id?: string | null;
+  forwarded_from_message_id?: string | null;
 }
 
 export interface KnowledgeNode {

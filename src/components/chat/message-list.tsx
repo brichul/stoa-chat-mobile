@@ -1,45 +1,251 @@
 import * as React from 'react';
 import { FlatList, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  // eslint-disable-next-line deprecation/deprecation
+  runOnJS,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
-import type { Message } from '@/api/types';
+import { ANIM_FAST } from '@/constants/animation';
+
+import type { Message, Participant } from '@/api/types';
 import { Text } from '@/components/ui/text';
 
-import { MessageBubble } from './message-bubble';
+import { MessageRow, type MessageLayout } from './message-bubble';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type DateHeaderItem = {
+  kind: 'date';
+  key: string;
+  label: string;
+};
+
+type MessageItem = {
+  kind: 'message';
+  key: string;
+  message: Message;
+  isMine: boolean;
+  isFirstInGroup: boolean;
+  isLastInGroup: boolean;
+  participant?: Participant;
+  readBy: Participant[];
+};
+
+type ListItem = DateHeaderItem | MessageItem;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const GROUP_GAP_MS = 5 * 60 * 1000;
+
+function formatDateHeader(ts: number): string {
+  const now = new Date();
+  const d = new Date(ts);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const msgStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((todayStart - msgStart) / 86_400_000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString('en-US', { weekday: 'long' });
+  return d.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    ...(diffDays > 365 ? { year: 'numeric' } : {}),
+  });
+}
+
+function sameGroup(a: Message, b: Message): boolean {
+  return (
+    a.type === 'message' &&
+    b.type === 'message' &&
+    a.sender_id === b.sender_id &&
+    Math.abs(a.timestamp - b.timestamp) < GROUP_GAP_MS
+  );
+}
+
+function buildListItems(
+  messages: Message[],
+  currentActorId: string,
+  participants: Participant[]
+): ListItem[] {
+  const items: ListItem[] = [];
+  let lastDateLabel = '';
+
+  const participantMap = new Map(participants.map((p) => [p.id, p]));
+
+  const readAtMessage = new Map<string, Participant[]>();
+  for (const p of participants) {
+    if (p.id === currentActorId || !p.last_read_message_id) continue;
+    const bucket = readAtMessage.get(p.last_read_message_id) ?? [];
+    bucket.push(p);
+    readAtMessage.set(p.last_read_message_id, bucket);
+  }
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const prev = messages[i - 1];
+    const next = messages[i + 1];
+
+    const dateLabel = formatDateHeader(msg.timestamp);
+    if (dateLabel !== lastDateLabel) {
+      items.push({ kind: 'date', key: `date_${i}`, label: dateLabel });
+      lastDateLabel = dateLabel;
+    }
+
+    const isMine = msg.sender_id === currentActorId;
+    const isFirstInGroup = !prev || !sameGroup(prev, msg);
+    const isLastInGroup = !next || !sameGroup(msg, next);
+    const participant = !isMine ? participantMap.get(msg.sender_id) : undefined;
+    const readBy = (readAtMessage.get(msg.id) ?? []).filter((p) => p.id !== currentActorId);
+
+    items.push({
+      kind: 'message',
+      key: msg.id,
+      message: msg,
+      isMine,
+      isFirstInGroup,
+      isLastInGroup,
+      participant,
+      readBy,
+    });
+  }
+
+  return items;
+}
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function DateHeader({ label }: { label: string }) {
+  return (
+    <View className="my-3 items-center">
+      <View className="bg-secondary rounded-2xl px-3 py-1">
+        <Text className="text-muted-foreground text-[11px] font-semibold">{label}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── MessageList ─────────────────────────────────────────────────────────────
 
 export interface MessageListProps {
   messages: Message[];
   currentActorId: string;
-  /** When true, render sender names (group conversations). */
-  showSenders?: boolean;
+  participants: Participant[];
+  onReact?: (messageId: string, emoji: string) => void;
+  onLongPress?: (message: Message, layout: MessageLayout) => void;
+  /** Fired when a message bubble is swiped right past the reply threshold. */
+  onSwipeReply?: (message: Message) => void;
+  /** Called when the user swipes right from the left edge of the chat area. */
+  onOpenSidebar?: () => void;
 }
 
-export function MessageList({ messages, currentActorId, showSenders }: MessageListProps) {
-  const ref = React.useRef<FlatList<Message>>(null);
+export function MessageList({
+  messages,
+  currentActorId,
+  participants,
+  onReact,
+  onLongPress,
+  onSwipeReply,
+  onOpenSidebar,
+}: MessageListProps) {
+  const listRef = React.useRef<FlatList<ListItem>>(null);
 
-  if (messages.length === 0) {
-    return (
-      <View className="flex-1 items-center justify-center px-8">
-        <Text className="text-muted-foreground text-center text-sm">
-          No messages yet. Say hello to get started.
-        </Text>
-      </View>
-    );
-  }
+  const isGroup = participants.filter((p) => p.permission === 'write').length > 2;
+
+  const items = React.useMemo(
+    () => buildListItems(messages, currentActorId, participants),
+    [messages, currentActorId, participants]
+  );
+
+  // ── Shared animated value: drives timestamp reveal across all rows ──────────
+  const showTimestamps = useSharedValue(0);
+
+  // Track where the touch began (to restrict sidebar gesture to left edge).
+  const gestureStartX = useSharedValue(0);
+
+  // Stable ref so the gesture closure never captures a stale callback.
+  const onOpenSidebarRef = React.useRef(onOpenSidebar);
+  onOpenSidebarRef.current = onOpenSidebar;
+  const callOpenSidebar = React.useCallback(() => {
+    onOpenSidebarRef.current?.();
+  }, []);
+
+  const listPan = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX([-12, 12])
+        .failOffsetY([-25, 25])
+        .onBegin((e) => {
+          gestureStartX.value = e.x;
+        })
+        .onUpdate((e) => {
+          // Left swipe: fade timestamps in proportionally
+          if (e.translationX < 0) {
+            // 80px swipe = full reveal; matches the bubble's max leftward translation
+            showTimestamps.value = Math.min(1, Math.abs(e.translationX) / 80);
+          }
+        })
+        .onEnd((e) => {
+          // Always fade timestamps back out on release
+          showTimestamps.value = withTiming(0, ANIM_FAST);
+
+          // Right swipe from the left-edge dead zone (< 30px) → open sidebar.
+          // Message content never starts in this zone (avatar gutter = 36px),
+          // so this never conflicts with the per-bubble reply gesture.
+          if (gestureStartX.value < 30 && e.translationX > 50) {
+            // eslint-disable-next-line deprecation/deprecation
+            runOnJS(callOpenSidebar)();
+          }
+        }),
+    [callOpenSidebar, gestureStartX, showTimestamps]
+  );
+
+  const emptyView = (
+    <View className="flex-1 items-center justify-center px-8">
+      <Text className="text-muted-foreground text-center text-sm">
+        No messages yet. Say hello to get started.
+      </Text>
+    </View>
+  );
 
   return (
-    <FlatList
-      ref={ref}
-      className="flex-1"
-      data={messages}
-      keyExtractor={(m) => m.id}
-      contentContainerClassName="py-3"
-      onContentSizeChange={() => ref.current?.scrollToEnd({ animated: false })}
-      renderItem={({ item, index }) => {
-        const prev = messages[index - 1];
-        const isMine = item.sender_id === currentActorId;
-        const showSender = !!showSenders && !isMine && prev?.sender_id !== item.sender_id;
-        return <MessageBubble message={item} isMine={isMine} showSender={showSender} />;
-      }}
-    />
+    <GestureDetector gesture={listPan}>
+      <Animated.View style={{ flex: 1 }}>
+        {messages.length === 0 ? (
+          emptyView
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={items}
+            keyExtractor={(item) => item.key}
+            contentContainerStyle={{ paddingVertical: 8 }}
+            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+            renderItem={({ item }) => {
+              if (item.kind === 'date') {
+                return <DateHeader label={item.label} />;
+              }
+              return (
+                <MessageRow
+                  message={item.message}
+                  isMine={item.isMine}
+                  isFirstInGroup={item.isFirstInGroup}
+                  isLastInGroup={item.isLastInGroup}
+                  isGroup={isGroup}
+                  participant={item.participant}
+                  readBy={item.readBy}
+                  currentActorId={currentActorId}
+                  showTimestamps={showTimestamps}
+                  onReact={onReact}
+                  onLongPress={onLongPress}
+                  onSwipeReply={onSwipeReply}
+                />
+              );
+            }}
+          />
+        )}
+      </Animated.View>
+    </GestureDetector>
   );
 }

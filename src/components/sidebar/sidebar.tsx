@@ -1,11 +1,22 @@
 import * as React from 'react';
-import { Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import Animated, {
+  // eslint-disable-next-line deprecation/deprecation
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+
+import { ANIM_FAST } from '@/constants/animation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CustomIcon, type CustomIconName, Logo } from '@/components/icons/custom-icon';
 import { Icon } from '@/components/icons/icon';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Text } from '@/components/ui/text';
 import { Palette } from '@/constants/theme';
+import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
 import { MOCK_CHATS } from '@/data/mock';
 
@@ -45,10 +56,112 @@ function ChatRow({ title, onPress }: { title: string; onPress: () => void }) {
   );
 }
 
+function ProfileMenu({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const { user, logout } = useAuth();
+  const insets = useSafeAreaInsets();
+
+  // Keep modal mounted during exit animation.
+  const [showing, setShowing] = React.useState(false);
+  const opacity = useSharedValue(0);
+
+  React.useEffect(() => {
+    if (visible) {
+      setShowing(true);
+      opacity.value = withTiming(1, ANIM_FAST);
+    } else if (showing) {
+      // eslint-disable-next-line deprecation/deprecation
+      opacity.value = withTiming(0, ANIM_FAST, (done) => {
+        if (done) runOnJS(setShowing)(false);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const fadeStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+
+  return (
+    <Modal visible={showing} transparent animationType="none" onRequestClose={onClose}>
+      <Animated.View
+        style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }, fadeStyle]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View
+          style={{ paddingBottom: insets.bottom + 16 }}
+          className="absolute bottom-0 left-0 right-0 rounded-t-2xl overflow-hidden"
+          onStartShouldSetResponder={() => true}>
+          <View style={{ backgroundColor: '#1C1B1A' }}>
+            {/* Profile row */}
+            <View className="flex-row items-center gap-3 px-5 py-4 border-b border-white/10">
+              <UserAvatar size={40} />
+              <View className="flex-1">
+                <Text className="text-base font-semibold" style={{ color: FG }}>
+                  {user?.display_name || user?.username || user?.email?.split('@')[0] || 'You'}
+                </Text>
+                {user?.email ? (
+                  <Text className="text-sm" style={{ color: MUTED }}>
+                    {user.email}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+
+            {/* Actions */}
+            <Pressable
+              onPress={onClose}
+              className="flex-row items-center gap-3 px-5 py-4 active:bg-white/10">
+              <Icon name="person" size={20} color={FG} />
+              <Text className="text-base" style={{ color: FG }}>
+                View profile
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={onClose}
+              className="flex-row items-center gap-3 px-5 py-4 active:bg-white/10">
+              <Icon name="settings" size={20} color={FG} />
+              <Text className="text-base" style={{ color: FG }}>
+                Settings
+              </Text>
+            </Pressable>
+            <View className="h-px mx-4 bg-white/10" />
+            <Pressable
+              onPress={() => { onClose(); logout(); }}
+              className="flex-row items-center gap-3 px-5 py-4 active:bg-white/10">
+              <Icon name="logout" size={20} color="#E57373" />
+              <Text className="text-base" style={{ color: '#E57373' }}>
+                Sign out
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+function UserAvatar({ size = 32 }: { size?: number }) {
+  const { user } = useAuth();
+  const initial = (
+    user?.display_name || user?.username || user?.email || 'U'
+  ).charAt(0).toUpperCase();
+
+  return (
+    <Avatar
+      alt={initial}
+      style={{ width: size, height: size, borderRadius: size / 2, overflow: 'hidden' }}>
+      {user?.avatar_url ? (
+        <AvatarImage source={{ uri: user.avatar_url }} />
+      ) : null}
+      <AvatarFallback style={{ backgroundColor: '#98514B' }}>
+        <Text style={{ color: '#fff', fontSize: size * 0.42, fontWeight: '600' }}>{initial}</Text>
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
 export function Sidebar() {
   const insets = useSafeAreaInsets();
-  const { closeSidebar, setActiveChatId, openGraph, newChat, uploadData } = useWorkspace();
+  const { closeSidebar, setActiveChat, openGraph, newChat, uploadData } = useWorkspace();
   const [query, setQuery] = React.useState('');
+  const [profileOpen, setProfileOpen] = React.useState(false);
 
   const actions: ActionButton[] = [
     { key: 'upload', label: 'Upload data', icon: 'data-unorganized', onPress: uploadData },
@@ -61,20 +174,27 @@ export function Sidebar() {
   );
 
   const openChat = (id: string) => {
-    setActiveChatId(id);
+    const chat = MOCK_CHATS.find((c) => c.id === id);
+    if (chat) setActiveChat(chat);
     closeSidebar();
   };
 
   return (
-    <View className="flex-1" style={{ paddingTop: insets.top, backgroundColor: Palette.black }}>
-      {/* Top bar: X (close) left, logo right. */}
-      <View className="h-12 flex-row items-center justify-between px-2">
+    <View className="flex-1" style={{ paddingTop: insets.top - 8, backgroundColor: Palette.black }}>
+      <View className="h-16 flex-row items-center justify-between px-3 py-3">
         <Pressable onPress={closeSidebar} hitSlop={8} className="h-10 w-10 items-center justify-center">
           <Icon name="close" size={24} color={FG} />
         </Pressable>
         <View className="h-10 w-10 items-center justify-center">
           <Logo size={28} color={FG} />
         </View>
+        {/* Profile photo — opens profile menu */}
+        <Pressable
+          onPress={() => setProfileOpen(true)}
+          hitSlop={8}
+          className="h-10 w-10 items-center justify-center">
+          <UserAvatar size={32} />
+        </Pressable>
       </View>
 
       {/* Action buttons (icon + text). */}
@@ -109,6 +229,8 @@ export function Sidebar() {
           <ChatRow key={c.id} title={c.name ?? 'Untitled chat'} onPress={() => openChat(c.id)} />
         ))}
       </ScrollView>
+
+      <ProfileMenu visible={profileOpen} onClose={() => setProfileOpen(false)} />
     </View>
   );
 }

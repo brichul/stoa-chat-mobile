@@ -54,11 +54,27 @@ export async function listMessages(
   return { messages: res.messages, has_more: res.has_more };
 }
 
-export async function sendMessage(chatId: string, content: string): Promise<Message> {
+export async function sendMessage(
+  chatId: string,
+  content: string,
+  replyToId?: string
+): Promise<Message> {
   const res = await apiFetch<{ success: boolean; message: Message }>(`/chats/${chatId}/messages`, {
     method: 'POST',
-    json: { content },
+    json: { content, ...(replyToId ? { reply_to_id: replyToId } : {}) },
   });
+  return res.message;
+}
+
+export async function forwardMessage(
+  chatId: string,
+  messageId: string,
+  targetChatId: string
+): Promise<Message> {
+  const res = await apiFetch<{ success: boolean; message: Message }>(
+    `/chats/${chatId}/messages/${messageId}/forward`,
+    { method: 'POST', json: { target_chat_id: targetChatId } }
+  );
   return res.message;
 }
 
@@ -81,4 +97,41 @@ export function pinChat(chatId: string): Promise<{ success: boolean }> {
 
 export function unpinChat(chatId: string): Promise<{ success: boolean }> {
   return apiFetch(`/chats/${chatId}/pin`, { method: 'DELETE' });
+}
+
+export function attachNode(
+  chatId: string,
+  nodeId: string
+): Promise<{ success: boolean; status?: string }> {
+  return apiFetch(`/chats/${chatId}/nodes`, { method: 'POST', json: { node_id: nodeId } });
+}
+
+export function detachNode(chatId: string, nodeId: string): Promise<{ success: boolean }> {
+  return apiFetch(`/chats/${chatId}/nodes/${nodeId}`, { method: 'DELETE' });
+}
+
+export function attachVault(
+  chatId: string,
+  vaultId: string
+): Promise<{ success: boolean; status?: string }> {
+  return apiFetch(`/chats/${chatId}/vaults`, { method: 'POST', json: { vault_id: vaultId } });
+}
+
+export function detachVault(chatId: string, vaultId: string): Promise<{ success: boolean }> {
+  return apiFetch(`/chats/${chatId}/vaults/${vaultId}`, { method: 'DELETE' });
+}
+
+export function addReaction(
+  chatId: string,
+  messageId: string,
+  emoji: string
+): Promise<{ success: boolean; counts: Record<string, number> }> {
+  return apiFetch(`/chats/${chatId}/messages/${messageId}/reactions`, {
+    method: 'POST',
+    json: { emoji },
+  });
+}
+
+export function getPinnedMessages(chatId: string): Promise<{ success: boolean; messages: Message[] }> {
+  return apiFetch(`/chats/${chatId}/pinned-messages`);
 }

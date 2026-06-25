@@ -1,6 +1,6 @@
 import { useColorScheme } from 'nativewind';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Linking, Pressable, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   interpolate,
@@ -20,8 +20,14 @@ import type { Message, Participant } from '@/api/types';
 import type { IconName } from '@/components/icons/icon';
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
-import { Colors, Palette } from '@/constants/theme';
+import { Colors, Fonts, Palette } from '@/constants/theme';
 
+import { EnrichedText } from 'react-native-enriched-html';
+
+import { hasRichContent, htmlToPlainText } from '@/lib/mentions';
+
+import { MENTION_TEXT_HTML_STYLE } from './mention-views';
+import { MessageAttachments } from './message-attachments';
 import { avatarColor, ParticipantAvatar, participantLabel } from './participant-avatar';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
@@ -171,6 +177,81 @@ function BubbleContent({
 }) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
+
+  const attachments = message.attachments ?? [];
+  const hasAttachments = attachments.length > 0;
+  const hasText = htmlToPlainText(message.content).trim().length > 0;
+  const align = isMine ? 'flex-end' : 'flex-start';
+
+  // Mentions/links need the native EnrichedText (which fills its container
+  // width); plain messages use a plain Text so the bubble hugs its content.
+  const renderContent = (color: string, extraStyle?: object) =>
+    hasRichContent(message.content) ? (
+      <View style={{maxWidth: message.content.replace(/<[^>]*>/g, '').length * 8 - 12}}>
+        <EnrichedText
+          htmlStyle={MENTION_TEXT_HTML_STYLE}
+          className='text-base leading-5'
+          onLinkPress={(e) => Linking.openURL(e.url)}
+          style={{ color, fontFamily: Fonts.sans, ...extraStyle }}>
+          {message.content}
+        </EnrichedText>
+      </View>
+    ) : (
+      <Text className="text-base leading-5" style={{ color, ...extraStyle }}>
+        {htmlToPlainText(message.content)}
+      </Text>
+    );
+
+  const senderNameEl = senderName ? (
+    <Text
+      style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
+      {senderName}
+    </Text>
+  ) : null;
+
+  const forwardedEl = message.is_forwarded ? (
+    <View className="mb-1 flex-row items-center gap-1">
+      <Icon name="forward" size={12} color={isMine && !hasAttachments ? '#aaa' : theme.textSecondary} />
+      <Text style={{ fontSize: 11, color: isMine && !hasAttachments ? '#aaa' : theme.textSecondary }}>
+        Forwarded
+      </Text>
+    </View>
+  ) : null;
+
+  const replyEl = message.reply_to ? (
+    <Pressable
+      onPress={() => message.reply_to && onPressReply?.(message.reply_to.id)}
+      style={{
+        borderLeftWidth: 2,
+        borderLeftColor: Palette.accentStart,
+        paddingLeft: 8,
+        marginBottom: 6,
+        opacity: 0.75,
+      }}>
+      <Text style={{ fontSize: 11, fontWeight: '600', color: isMine && !hasAttachments ? '#ccc' : theme.textSecondary }}>
+        {message.reply_to.sender_name}
+      </Text>
+      <Text style={{ fontSize: 12, color: isMine && !hasAttachments ? '#bbb' : theme.textSecondary }} numberOfLines={1}>
+        {htmlToPlainText(message.reply_to.content)}
+      </Text>
+    </Pressable>
+  ) : null;
+
+  // Attachment messages drop the bubble chrome: photos render bare, chips/cards
+  // carry their own. The caption (if any) is attached directly underneath the
+  // item with no separation; ownership is conveyed by alignment alone.
+  if (hasAttachments) {
+    return (
+      <View style={{ maxWidth: '80%', alignItems: align }}>
+        {senderNameEl}
+        {forwardedEl}
+        {replyEl}
+        <MessageAttachments attachments={attachments} align={align} />
+        {hasText && renderContent(theme.text, { marginTop: 3, alignSelf: 'stretch' })}
+      </View>
+    );
+  }
+
   return (
     <View
       style={[
@@ -180,49 +261,11 @@ function BubbleContent({
           ? { backgroundColor: Palette.black }
           : { backgroundColor: theme.backgroundElement, borderWidth: 1, borderColor: '#131211' },
       ]}>
-      {senderName && (
-        <Text
-          style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
-          {senderName}
-        </Text>
-      )}
+      {senderNameEl}
+      {forwardedEl}
+      {replyEl}
 
-      {message.is_forwarded && (
-        <View className="mb-1 flex-row items-center gap-1">
-          <Icon name="forward" size={12} color={isMine ? '#aaa' : theme.textSecondary} />
-          <Text style={{ fontSize: 11, color: isMine ? '#aaa' : theme.textSecondary }}>
-            Forwarded
-          </Text>
-        </View>
-      )}
-
-      {message.reply_to && (
-        <Pressable
-          onPress={() => message.reply_to && onPressReply?.(message.reply_to.id)}
-          style={{
-            borderLeftWidth: 2,
-            borderLeftColor: Palette.accentStart,
-            paddingLeft: 8,
-            marginBottom: 6,
-            opacity: 0.75,
-          }}>
-          <Text
-            style={{ fontSize: 11, fontWeight: '600', color: isMine ? '#ccc' : theme.textSecondary }}>
-            {message.reply_to.sender_name}
-          </Text>
-          <Text
-            style={{ fontSize: 12, color: isMine ? '#bbb' : theme.textSecondary }}
-            numberOfLines={1}>
-            {message.reply_to.content}
-          </Text>
-        </Pressable>
-      )}
-
-      <Text
-        className="text-base leading-5"
-        style={{ color: isMine ? Palette.white : theme.text }}>
-        {message.content}
-      </Text>
+      {renderContent(isMine ? Palette.white : theme.text)}
     </View>
   );
 }

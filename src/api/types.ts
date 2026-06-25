@@ -83,6 +83,37 @@ export interface MessageReplySnippet {
   content: string;
 }
 
+export type MessageAttachmentKind = 'file' | 'image' | 'node' | 'vault' | 'link' | 'text';
+
+/**
+ * Something attached to a message and rendered above its text: an uploaded file
+ * or photo, a referenced node/vault, or a link preview. The backend doesn't
+ * persist these yet — for now they're built client-side (see chat-screen).
+ */
+export interface MessageAttachment {
+  kind: MessageAttachmentKind;
+  /** Display label: file/photo name, node title, vault name, or link title. */
+  name: string;
+  /** Local or remote URI for image/file attachments. */
+  uri?: string;
+  mimeType?: string;
+  /** Byte size for files, when known. */
+  size?: number;
+  /** Intrinsic dimensions for images, used to size the preview. */
+  width?: number;
+  height?: number;
+  /** Backend id for node/vault references. */
+  refId?: string;
+  /** Secondary label, e.g. vault type or node status. */
+  subtitle?: string;
+  /** Target URL for link attachments. */
+  url?: string;
+  /** OpenGraph-style preview image for link attachments, if one exists. */
+  previewImageUrl?: string;
+  /** Full body for `text` attachments (long pasted text). */
+  text?: string;
+}
+
 export interface Message {
   id: string;
   type: 'message' | 'system' | string;
@@ -90,6 +121,7 @@ export interface Message {
   sender_type: ActorType;
   sender_name: string;
   content: string;
+  attachments?: MessageAttachment[];
   mentions?: Mention[];
   /** Epoch milliseconds. */
   timestamp: number;
@@ -133,13 +165,30 @@ export interface Vault {
   description?: string;
 }
 
+/** A single entry in a user's "current projects" list. */
+export interface ProjectItem {
+  title: string;
+  description?: string;
+}
+
 /** Public-facing user info — what GET /v1/users/:id/profile exposes. */
 export interface PublicProfile {
   id: string;
   username?: string | null;
   display_name?: string | null;
   avatar_url?: string | null;
+  /** Job title (free-text), not the permission role. */
+  job_title?: string | null;
+  bio?: string | null;
+  current_projects?: ProjectItem[];
   created_at?: string;
+}
+
+/** A team the user belongs to (their team plus its ancestors). */
+export interface PublicTeam {
+  id: string;
+  name?: string | null;
+  parent_team_id?: string | null;
 }
 
 /** Public subset of a bot owned by a user. */
@@ -169,6 +218,7 @@ export interface PublicVault {
 /** Response shape of GET /v1/users/:id/profile. */
 export interface UserProfile {
   profile: PublicProfile;
+  teams: PublicTeam[];
   bots: PublicBot[];
   vaults: PublicVault[];
 }

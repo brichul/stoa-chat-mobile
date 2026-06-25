@@ -3,13 +3,15 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 
-import type { Message } from '@/api/types';
+import type { Chat, Message, MessageAttachment } from '@/api/types';
 import { ChatHeader } from '@/components/chat/chat-header';
 import { MessageComposer, type Attachment } from '@/components/chat/message-composer';
 import { MessageList } from '@/components/chat/message-list';
 import { ReactionsSheet } from '@/components/chat/reactions-sheet';
 import { useWorkspace } from '@/contexts/workspace-context';
 import { CURRENT_USER_ID, MOCK_CHATS, MOCK_MESSAGES } from '@/data/mock';
+import { extractFirstUrl, mockLinkPreview } from '@/lib/link-preview';
+import { extractMentionsFromHtml, htmlToPlainText, type MentionRef } from '@/lib/mentions';
 
 import {
   MessageActionOverlay,
@@ -20,7 +22,12 @@ export function ChatScreen() {
   const { activeChat, openSidebar } = useWorkspace();
   const router = useRouter();
 
-  const chat = activeChat ?? MOCK_CHATS[0];
+  // Local copy of the chat so @-mentions can attach nodes/vaults and add
+  // participants in-place. Re-syncs when the active chat changes.
+  const [chat, setChat] = React.useState<Chat>(activeChat ?? MOCK_CHATS[0]);
+  React.useEffect(() => {
+    setChat(activeChat ?? MOCK_CHATS[0]);
+  }, [activeChat]);
 
   const [messages, setMessages] = React.useState<Message[]>([]);
   React.useEffect(() => {
@@ -77,7 +84,7 @@ export function ChatScreen() {
   // ─── Copy ───────────────────────────────────────────────────────────────────
 
   const handleCopy = () => {
-    if (selectedMessage) void Clipboard.setStringAsync(selectedMessage.content);
+    if (selectedMessage) void Clipboard.setStringAsync(htmlToPlainText(selectedMessage.content));
     dismissOverlay();
   };
 
@@ -115,12 +122,88 @@ export function ChatScreen() {
     // TODO: wire to addReaction(chat.id, messageId, emoji)
   };
 
+  // ─── Mention side effects ─────────────────────────────────────────────────────
+  //
+  // Referencing something with @ attaches it to the chat: a user is added as a
+  // participant, a node/vault is attached. Applied to local chat state for now;
+  // each branch marks where the backend call slots in.
+
+  const applyMentionEffects = (refs: MentionRef[]) => {
+    if (!refs.length) return;
+    setChat((prev) => {
+      let participants = prev.participants;
+      let attachedNodes = prev.attached_nodes ?? [];
+      let nodesDetail = prev.attached_nodes_detail ?? [];
+      let attachedVaults = prev.attached_vaults ?? [];
+      let vaultsDetail = prev.attached_vaults_detail ?? [];
+      let changed = false;
+
+      for (const ref of refs) {
+        if (ref.kind === 'user') {
+          if (participants.some((p) => p.id === ref.id)) continue;
+          participants = [
+            ...participants,
+            {
+              id: ref.id,
+              type: 'user',
+              permission: 'write',
+              display_name: ref.label,
+              username: ref.inserted,
+              avatar_url: ref.avatar_url ?? null,
+              last_read_message_id: null,
+            },
+          ];
+          changed = true;
+          // TODO: POST /v1/chats/${prev.id}/participants { user_id: ref.id }
+        } else if (ref.kind === 'node') {
+          if (attachedNodes.includes(ref.id)) continue;
+          attachedNodes = [...attachedNodes, ref.id];
+          nodesDetail = [...nodesDetail, { id: ref.id, title: ref.label }];
+          changed = true;
+          // TODO: POST /v1/chats/${prev.id}/nodes { node_id: ref.id }
+        } else {
+          if (attachedVaults.includes(ref.id)) continue;
+          attachedVaults = [...attachedVaults, ref.id];
+          vaultsDetail = [...vaultsDetail, { id: ref.id, name: ref.label }];
+          changed = true;
+          // TODO: POST /v1/chats/${prev.id}/vaults { vault_id: ref.id }
+        }
+      }
+
+      if (!changed) return prev;
+      return {
+        ...prev,
+        participants,
+        attached_nodes: attachedNodes,
+        attached_nodes_detail: nodesDetail,
+        attached_vaults: attachedVaults,
+        attached_vaults_detail: vaultsDetail,
+      };
+    });
+  };
+
   // ─── Send ───────────────────────────────────────────────────────────────────
 
   const handleSend = (text: string, attachments: Attachment[]) => {
-    const content = attachments.length
-      ? `${text}${text ? '\n' : ''}${attachments.map((a) => `📎 ${a.name}`).join('\n')}`
-      : text;
+    const msgAttachments: MessageAttachment[] = attachments.map((a) => ({
+      kind: a.kind,
+      name: a.name,
+      uri: a.uri,
+      mimeType: a.mimeType,
+      size: a.size,
+      width: a.width,
+      height: a.height,
+      refId: a.refId,
+      subtitle: a.subtitle,
+      text: a.text,
+    }));
+
+    // Auto-detect a URL in the message and render it as a link preview card.
+    // `text` is enriched HTML, so flatten it first or the URL grabs trailing tags.
+    const url = extractFirstUrl(htmlToPlainText(text));
+    if (url && !msgAttachments.some((a) => a.kind === 'link')) {
+      msgAttachments.push(mockLinkPreview(url));
+    }
 
     const newMessage: Message = {
       id: `local_${Date.now()}`,
@@ -128,7 +211,8 @@ export function ChatScreen() {
       sender_id: CURRENT_USER_ID,
       sender_type: 'user',
       sender_name: 'You',
-      content,
+      content: text,
+      ...(msgAttachments.length ? { attachments: msgAttachments } : {}),
       timestamp: Date.now(),
       ...(replyTo
         ? {
@@ -144,6 +228,7 @@ export function ChatScreen() {
     };
 
     setMessages((prev) => [...prev, newMessage]);
+    applyMentionEffects(extractMentionsFromHtml(text));
     setReplyTo(null);
     // TODO: call sendMessage(chat.id, content, replyTo?.id)
   };
@@ -177,6 +262,7 @@ export function ChatScreen() {
           onSend={handleSend}
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
+          participants={chat.participants}
         />
       </KeyboardAvoidingView>
 

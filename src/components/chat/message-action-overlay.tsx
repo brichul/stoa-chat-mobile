@@ -1,7 +1,8 @@
 import { BlurView } from 'expo-blur';
 import { useColorScheme } from 'nativewind';
 import * as React from 'react';
-import { Dimensions, Modal, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Dimensions, Linking, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { EnrichedText } from 'react-native-enriched-html';
 import Animated, {
   // eslint-disable-next-line deprecation/deprecation
   runOnJS,
@@ -14,9 +15,12 @@ import type { Message } from '@/api/types';
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
 import { ANIM_FAST } from '@/constants/animation';
-import { Colors, Palette } from '@/constants/theme';
+import { Colors, Fonts, Palette } from '@/constants/theme';
+import { htmlToPlainText } from '@/lib/mentions';
 
 import { EmojiDrawer } from './emoji-drawer';
+import { MENTION_TEXT_HTML_STYLE } from './mention-views';
+import { MessageAttachments } from './message-attachments';
 import { avatarColor } from './participant-avatar';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -69,6 +73,73 @@ function BubbleCopy({
 }) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
+
+  const attachments = message.attachments ?? [];
+  const hasAttachments = attachments.length > 0;
+  const hasText = message.content.trim().length > 0;
+  const align = isMine ? 'flex-end' : 'flex-start';
+
+  const senderNameEl = senderName ? (
+    <Text
+      style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
+      {senderName}
+    </Text>
+  ) : null;
+
+  const replyEl = message.reply_to ? (
+    <View
+      style={{
+        borderLeftWidth: 2,
+        borderLeftColor: Palette.accentStart,
+        paddingLeft: 8,
+        marginBottom: 6,
+        opacity: 0.7,
+        alignSelf: 'stretch',
+      }}>
+      <Text style={{ color: isMine && !hasAttachments ? '#ddd' : theme.textSecondary, fontSize: 11, fontWeight: '600' }}>
+        {message.reply_to.sender_name}
+      </Text>
+      <Text style={{ color: isMine && !hasAttachments ? '#ddd' : theme.textSecondary, fontSize: 12 }} numberOfLines={1}>
+        {htmlToPlainText(message.reply_to.content)}
+      </Text>
+    </View>
+  ) : null;
+
+  const textColor = isMine && !hasAttachments ? Palette.white : theme.text;
+
+  /*
+    EnrichedText renders the same chips as the in-list bubble while staying
+    natively selectable — a long-pressed message mirrors the bubble exactly and
+    its text can still be highlighted/copied.
+  */
+  const textEl = !hasText ? null : (
+    <EnrichedText
+      selectable
+      htmlStyle={MENTION_TEXT_HTML_STYLE}
+      onLinkPress={(e) => Linking.openURL(e.url)}
+      className='text-base leading-5'
+      style={{
+        marginTop: hasAttachments ? 3 : 0,
+        alignSelf: 'stretch',
+        color: textColor,
+        fontFamily: Fonts.sans,
+      }}>
+      {message.content}
+    </EnrichedText>
+  );
+
+  // Attachment messages drop the bubble chrome, matching the in-list bubble.
+  if (hasAttachments) {
+    return (
+      <View style={{ alignSelf: isMine ? 'flex-end' : 'flex-start', maxWidth: '100%', alignItems: align }}>
+        {senderNameEl}
+        {replyEl}
+        <MessageAttachments attachments={attachments} align={align} />
+        {textEl}
+      </View>
+    );
+  }
+
   return (
     <View
       style={{
@@ -80,55 +151,9 @@ function BubbleCopy({
         borderWidth: isMine ? 0 : 1,
         borderColor: '#131211',
       }}>
-      {senderName && (
-        <Text
-          style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
-          {senderName}
-        </Text>
-      )}
-
-      {message.reply_to && (
-        <View
-          style={{
-            borderLeftWidth: 2,
-            borderLeftColor: Palette.accentStart,
-            paddingLeft: 8,
-            marginBottom: 6,
-            opacity: 0.7,
-          }}>
-          <Text style={{ color: isMine ? '#ddd' : theme.textSecondary, fontSize: 11, fontWeight: '600' }}>
-            {message.reply_to.sender_name}
-          </Text>
-          <Text style={{ color: isMine ? '#ddd' : theme.textSecondary, fontSize: 12 }} numberOfLines={1}>
-            {message.reply_to.content}
-          </Text>
-        </View>
-      )}
-      {/*
-        Rendered as a read-only TextInput rather than <Text selectable> so iOS
-        gives real selection — drag handles + partial highlight. A plain Text
-        only exposes a "Copy everything" callout with no granular selection.
-      */}
-      <TextInput
-        value={message.content}
-        editable={false}
-        multiline
-        scrollEnabled={false}
-        className='text-base font-sans leading-5'
-        // Android only allows selection on editable inputs; keep it editable
-        // there but suppress the keyboard/caret so it reads as static text.
-        {...(Platform.OS === 'android'
-          ? { editable: true, showSoftInputOnFocus: false, caretHidden: true }
-          : null)}
-        style={{
-          // fontSize: 16,
-          // lineHeight: 20,
-          padding: 0,
-          margin: 0,
-          color: isMine ? Palette.white : theme.text,
-          ...(Platform.OS === 'android' ? { includeFontPadding: false, textAlignVertical: 'top' } : null),
-        }}
-      />
+      {senderNameEl}
+      {replyEl}
+      {textEl}
     </View>
   );
 }

@@ -21,6 +21,8 @@ export interface User {
 
 export interface LoginResponse {
   success: boolean;
+  /** Tenant the backend resolved/authenticated against; needed for refresh & logout. */
+  tenant_slug: string;
   access_token: string;
   token_type: string;
   expires_in?: number;

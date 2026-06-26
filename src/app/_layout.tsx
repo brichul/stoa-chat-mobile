@@ -32,6 +32,7 @@ export default function RootLayout() {
             <Stack.Screen name="index" />
             <Stack.Screen name="chat-details" options={{ presentation: 'modal' }} />
             <Stack.Screen name="profile" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="profile-edit" options={{ presentation: 'modal' }} />
           </Stack>
           <PortalHost />
           <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />

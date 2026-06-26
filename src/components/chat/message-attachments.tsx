@@ -8,6 +8,7 @@ import { Icon, type IconName } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
 
+import { ImageViewer } from './image-viewer';
 import { TextAttachmentDrawer } from './text-attachment-drawer';
 
 // Photos and link cards share a fixed width so a column of them lines up.
@@ -96,8 +97,19 @@ function Chip({ attachment, compact }: { attachment: MessageAttachment; compact?
   );
 }
 
-/** A photo — just the image, no bubble or border. Compact = a small square thumb. */
-function Photo({ attachment, compact }: { attachment: MessageAttachment; compact?: boolean }) {
+/**
+ * A photo — just the image, no bubble or border. Compact = a small square thumb.
+ * Tapping a full-size photo (`onPress`) opens the full-screen zoomable viewer.
+ */
+function Photo({
+  attachment,
+  compact,
+  onPress,
+}: {
+  attachment: MessageAttachment;
+  compact?: boolean;
+  onPress?: () => void;
+}) {
   if (compact) {
     return (
       <Image
@@ -113,12 +125,14 @@ function Photo({ attachment, compact }: { attachment: MessageAttachment; compact
       ? attachment.width / attachment.height
       : DEFAULT_ASPECT;
   return (
-    <Image
-      source={{ uri: attachment.uri }}
-      style={{ width: MEDIA_WIDTH, aspectRatio: aspect, borderRadius: 14 }}
-      contentFit="cover"
-      transition={150}
-    />
+    <Pressable onPress={onPress} disabled={!onPress}>
+      <Image
+        source={{ uri: attachment.uri }}
+        style={{ width: MEDIA_WIDTH, aspectRatio: aspect, borderRadius: 14 }}
+        contentFit="cover"
+        transition={150}
+      />
+    </Pressable>
   );
 }
 
@@ -235,11 +249,15 @@ function TextSnippet({ attachment, compact }: { attachment: MessageAttachment; c
 export function AttachmentItem({
   attachment,
   compact = false,
+  onPressImage,
 }: {
   attachment: MessageAttachment;
   compact?: boolean;
+  /** Tap handler for full-size photos — opens the full-screen viewer. */
+  onPressImage?: () => void;
 }) {
-  if (attachment.kind === 'image') return <Photo attachment={attachment} compact={compact} />;
+  if (attachment.kind === 'image')
+    return <Photo attachment={attachment} compact={compact} onPress={onPressImage} />;
   if (attachment.kind === 'text') return <TextSnippet attachment={attachment} compact={compact} />;
   if (attachment.kind === 'link' && !compact) return <LinkCard attachment={attachment} />;
   return <Chip attachment={attachment} compact={compact} />;
@@ -257,12 +275,36 @@ export function MessageAttachments({
   attachments: MessageAttachment[];
   align: 'flex-start' | 'flex-end';
 }) {
+  // The full-screen viewer scrolls across all photos in this message, so map each
+  // photo to its position within that subset.
+  const images = React.useMemo(
+    () => attachments.filter((a) => a.kind === 'image' && a.uri),
+    [attachments]
+  );
+  const [viewerIndex, setViewerIndex] = React.useState<number | null>(null);
+
   if (!attachments.length) return null;
   return (
     <View style={{ alignItems: align, gap: 4 }}>
-      {attachments.map((a, i) => (
-        <AttachmentItem key={`${a.refId ?? a.uri ?? a.url ?? a.name}-${i}`} attachment={a} />
-      ))}
+      {attachments.map((a, i) => {
+        const imageIndex = a.kind === 'image' && a.uri ? images.indexOf(a) : -1;
+        return (
+          <AttachmentItem
+            key={`${a.refId ?? a.uri ?? a.url ?? a.name}-${i}`}
+            attachment={a}
+            onPressImage={imageIndex >= 0 ? () => setViewerIndex(imageIndex) : undefined}
+          />
+        );
+      })}
+
+      {images.length > 0 && (
+        <ImageViewer
+          images={images.map((a) => ({ uri: a.uri!, width: a.width, height: a.height }))}
+          initialIndex={viewerIndex ?? 0}
+          visible={viewerIndex !== null}
+          onClose={() => setViewerIndex(null)}
+        />
+      )}
     </View>
   );
 }

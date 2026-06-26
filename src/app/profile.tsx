@@ -8,7 +8,8 @@ import { CustomIcon } from '@/components/icons/custom-icon';
 import { avatarColor } from '@/components/chat/participant-avatar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Text } from '@/components/ui/text';
-import { getMockProfile } from '@/data/mock';
+import { CURRENT_USER_ID, getMockProfile } from '@/data/mock';
+import { useMyProfile } from '@/data/my-profile-store';
 
 function profileLabel(p: PublicProfile): string {
   return p.display_name || p.username || p.id;
@@ -119,18 +120,28 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { userId } = useLocalSearchParams<{ userId: string }>();
+  const isOwn = !userId || userId === CURRENT_USER_ID;
 
-  // Mock data for now — see src/api/profile.ts for the live backend contract.
-  const { profile, teams, bots, vaults } = getMockProfile(userId ?? 'user_me');
+  // Own profile reads from the editable store (reflects edits); others use mocks.
+  // See src/api/profile.ts for the live backend contract.
+  const myProfile = useMyProfile();
+  const { profile, teams, bots, vaults } = isOwn ? myProfile : getMockProfile(userId);
   const projects = profile.current_projects ?? [];
 
   return (
     <View className="bg-background flex-1" style={{ paddingTop: insets.top }}>
       <View className="h-12 flex-row items-center justify-between px-2">
-        <Text className="text-foreground text-base font-semibold">Profile</Text>
         <Pressable onPress={() => router.back()} hitSlop={8} className="h-10 w-10 items-center justify-center">
           <Icon name="close" size={24} />
         </Pressable>
+        <Text className="text-foreground text-base font-semibold">Profile</Text>
+        {isOwn ? (
+          <Pressable onPress={() => router.push('/profile-edit')} hitSlop={8} className="h-10 px-2 justify-center">
+            <Text className="text-primary text-base font-semibold">Edit</Text>
+          </Pressable>
+        ) : (
+          <View className="h-10 w-10" />
+        )}
       </View>
 
       <ScrollView contentContainerClassName="pb-10">

@@ -5,6 +5,7 @@ import { KeyboardAvoidingView, Platform, View } from 'react-native';
 
 import type { Chat, Message, MessageAttachment } from '@/api/types';
 import { ChatHeader } from '@/components/chat/chat-header';
+import { EmojiDrawer } from '@/components/chat/emoji-drawer';
 import { MessageComposer, type Attachment } from '@/components/chat/message-composer';
 import { MessageList } from '@/components/chat/message-list';
 import { ReactionsSheet } from '@/components/chat/reactions-sheet';
@@ -52,6 +53,18 @@ export function ChatScreen() {
     setSelectedMessage(null);
     setSelectedLayout(null);
     setSelectedSenderName(undefined);
+  };
+
+  // ─── Full emoji picker ────────────────────────────────────────────────────────
+  // Lifted out of the overlay: presenting a second Modal while the overlay Modal
+  // is up fails on iOS, so we close the overlay first, then open the picker.
+
+  const [emojiPickerFor, setEmojiPickerFor] = React.useState<Message | null>(null);
+
+  const handleOpenEmojiPicker = () => {
+    const msg = selectedMessage;
+    dismissOverlay();
+    setTimeout(() => setEmojiPickerFor(msg), 60);
   };
 
   // ─── Reactions breakdown sheet ────────────────────────────────────────────────
@@ -103,23 +116,29 @@ export function ChatScreen() {
 
   // ─── React ──────────────────────────────────────────────────────────────────
 
+  // One reaction per person: tapping a new emoji moves the user's reaction off
+  // any other emoji; tapping the one they already have removes it (toggle off).
   const handleReact = (messageId: string, emoji: string) => {
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id !== messageId) return m;
         const reactions = { ...(m.reactions ?? {}) };
-        const current = reactions[emoji] ?? [];
-        if (current.includes(CURRENT_USER_ID)) {
-          const next = current.filter((id) => id !== CURRENT_USER_ID);
-          if (next.length === 0) delete reactions[emoji];
-          else reactions[emoji] = next;
-        } else {
-          reactions[emoji] = [...current, CURRENT_USER_ID];
+        const alreadyReacted = reactions[emoji]?.includes(CURRENT_USER_ID) ?? false;
+
+        // Drop the user from every emoji first.
+        for (const e of Object.keys(reactions)) {
+          const filtered = reactions[e].filter((id) => id !== CURRENT_USER_ID);
+          if (filtered.length) reactions[e] = filtered;
+          else delete reactions[e];
+        }
+        // Re-add only if this wasn't the emoji they already had.
+        if (!alreadyReacted) {
+          reactions[emoji] = [...(reactions[emoji] ?? []), CURRENT_USER_ID];
         }
         return { ...m, reactions };
       })
     );
-    // TODO: wire to addReaction(chat.id, messageId, emoji)
+    // TODO: wire to setReaction(chat.id, messageId, emoji) — backend enforces one per user
   };
 
   // ─── Mention side effects ─────────────────────────────────────────────────────
@@ -249,6 +268,7 @@ export function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}>
         <MessageList
+          key={chat.id}
           messages={messages}
           currentActorId={CURRENT_USER_ID}
           participants={chat.participants}
@@ -279,6 +299,7 @@ export function ChatScreen() {
           onForward={handleForward}
           onCopy={handleCopy}
           onPin={handlePin}
+          onOpenEmojiPicker={handleOpenEmojiPicker}
           senderName={selectedSenderName}
         />
       )}
@@ -290,6 +311,16 @@ export function ChatScreen() {
         participants={chat.participants}
         currentActorId={CURRENT_USER_ID}
         onClose={() => setReactionsMessage(null)}
+      />
+
+      {/* Full emoji picker (reaction) */}
+      <EmojiDrawer
+        visible={emojiPickerFor !== null}
+        onClose={() => setEmojiPickerFor(null)}
+        onSelect={(emoji) => {
+          if (emojiPickerFor) handleReact(emojiPickerFor.id, emoji);
+          setEmojiPickerFor(null);
+        }}
       />
     </View>
   );

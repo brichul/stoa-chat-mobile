@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Linking, Pressable, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  FadeInDown,
   interpolate,
   // eslint-disable-next-line deprecation/deprecation
   runOnJS,
@@ -11,7 +12,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSequence,
-  withTiming,
+  withTiming
 } from 'react-native-reanimated';
 
 import { ANIM_FAST } from '@/constants/animation';
@@ -24,6 +25,7 @@ import { Colors, Fonts, Palette } from '@/constants/theme';
 
 import { EnrichedText } from 'react-native-enriched-html';
 
+import { extractFirstUrl } from '@/lib/link-preview';
 import { hasRichContent, htmlToPlainText } from '@/lib/mentions';
 
 import { MENTION_TEXT_HTML_STYLE } from './mention-views';
@@ -38,6 +40,12 @@ const FULL_R = 0;
 const FLAT_R = 0;
 const REPLY_THRESHOLD = 60; // drag distance that fires the reply callback
 const MAX_DRAG = 80;        // maximum bubble translation
+const LONG_PRESS_MS = 350;  // hold duration before the action overlay opens
+const PRESS_GROW = 1.06;    // how much the bubble swells while held
+
+// Animate the Pressable directly (rather than wrapping the bubble in an extra
+// view) so the press-grow scale doesn't change how the bubble's maxWidth resolves.
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -160,28 +168,37 @@ function ReadReceipts({ readBy, isGroup }: { readBy: Participant[]; isGroup: boo
 
 // ─── Bubble content ───────────────────────────────────────────────────────────
 
-function BubbleContent({
+export function BubbleContent({
   message,
   isMine,
   radius,
   senderName,
   onPressReply,
+  selectable = false,
 }: {
   message: Message;
   isMine: boolean;
-  radius: ReturnType<typeof bubbleRadius>;
+  radius?: ReturnType<typeof bubbleRadius>;
   /** Group chats: name of the sender, shown inside the first bubble of a group. */
   senderName?: string;
   /** Tapping the inline reply snippet jumps to the original message. */
   onPressReply?: (replyToId: string) => void;
+  /** Make the message text natively selectable (used by the long-press overlay). */
+  selectable?: boolean;
 }) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
 
   const attachments = message.attachments ?? [];
   const hasAttachments = attachments.length > 0;
-  const hasText = htmlToPlainText(message.content).trim().length > 0;
   const align = isMine ? 'flex-end' : 'flex-start';
+
+  // When the whole message is just a URL that's already shown as a link preview
+  // card, drop the redundant inline link and let the card speak for itself.
+  const plain = htmlToPlainText(message.content).trim();
+  const hasLinkCard = attachments.some((a) => a.kind === 'link');
+  const isBareLink = hasLinkCard && plain.length > 0 && extractFirstUrl(plain) === plain;
+  const hasText = plain.length > 0 && !isBareLink;
 
   // Mentions/links need the native EnrichedText (which fills its container
   // width); plain messages use a plain Text so the bubble hugs its content.
@@ -189,6 +206,7 @@ function BubbleContent({
     hasRichContent(message.content) ? (
       <View style={{maxWidth: message.content.replace(/<[^>]*>/g, '').length * 8 - 12}}>
         <EnrichedText
+          selectable={selectable}
           htmlStyle={MENTION_TEXT_HTML_STYLE}
           className='text-base leading-5'
           onLinkPress={(e) => Linking.openURL(e.url)}
@@ -197,7 +215,7 @@ function BubbleContent({
         </EnrichedText>
       </View>
     ) : (
-      <Text className="text-base leading-5" style={{ color, ...extraStyle }}>
+      <Text selectable={selectable} className="text-base leading-5" style={{ color, ...extraStyle }}>
         {htmlToPlainText(message.content)}
       </Text>
     );
@@ -300,6 +318,8 @@ export interface MessageRowProps {
   onShowReactions?: (message: Message) => void;
   /** Tap the inline reply snippet → jump to the original message. */
   onPressReply?: (replyToId: string) => void;
+  /** Animate the row in from below (only for messages that arrive after mount). */
+  animateIn?: boolean;
 }
 
 export function MessageRow({
@@ -318,6 +338,7 @@ export function MessageRow({
   onSwipeReply,
   onShowReactions,
   onPressReply,
+  animateIn,
 }: MessageRowProps) {
   const { colorScheme } = useColorScheme();
   const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
@@ -325,6 +346,11 @@ export function MessageRow({
   // ── Swipe-right to reply ────────────────────────────────────────────────────
   const replyDrag = useSharedValue(0);
   const hasTriggered = useSharedValue(false);
+
+  // ── Press-and-hold grow: bubble swells during the long-press, then the
+  //    overlay replica picks up at this scale and settles back to 1.0.
+  const pressScale = useSharedValue(1);
+  const pressScaleStyle = useAnimatedStyle(() => ({ transform: [{ scale: pressScale.value }] }));
 
   // "mine" bubbles slide left to reveal the timestamp (right side has room).
   // "others" bubbles stay put — they're near the left edge and would go off-screen.
@@ -450,7 +476,18 @@ export function MessageRow({
 
   const handleLongPress = () => {
     bubbleRef.current?.measureInWindow((x, y, width, height) => {
-      onLongPress?.(message, { x, y, width, height }, senderName);
+      // The bubble is mid press-grow (scaled to ~PRESS_GROW about its center) when
+      // measured, so the raw rect is inflated and shifted up-left. Divide the live
+      // scale back out — the center is scale-invariant — so the overlay anchors to
+      // the bubble's true resting rect and lines up exactly with the in-list one.
+      const s = pressScale.value || 1;
+      const w = width / s;
+      const h = height / s;
+      onLongPress?.(
+        message,
+        { x: x + (width - w) / 2, y: y + (height - h) / 2, width: w, height: h },
+        senderName
+      );
     });
   };
 
@@ -471,7 +508,9 @@ export function MessageRow({
   const replyIconLeft = !isMine ? gutter : 4;
 
   return (
-    <View style={{ marginTop: topGap }}>
+    <Animated.View
+      style={{ marginTop: topGap }}
+      entering={animateIn ? FadeInDown.duration(160) : undefined}>
       {/* Pinned banner */}
       {message.is_pinned && (
         <View
@@ -527,7 +566,17 @@ export function MessageRow({
                 </View>
               )}
               <View style={{ flex: 1, alignItems: isMine ? 'flex-end' : 'flex-start' }}>
-                <Pressable ref={bubbleRef} onLongPress={handleLongPress} delayLongPress={350}>
+                <AnimatedPressable
+                  ref={bubbleRef}
+                  onLongPress={handleLongPress}
+                  delayLongPress={LONG_PRESS_MS}
+                  onPressIn={() => {
+                    pressScale.value = withTiming(PRESS_GROW, { duration: LONG_PRESS_MS });
+                  }}
+                  onPressOut={() => {
+                    pressScale.value = withTiming(1, ANIM_FAST);
+                  }}
+                  style={pressScaleStyle}>
                   <BubbleContent
                     message={message}
                     isMine={isMine}
@@ -535,7 +584,7 @@ export function MessageRow({
                     senderName={senderName}
                     onPressReply={onPressReply}
                   />
-                </Pressable>
+                </AnimatedPressable>
               </View>
               {!isMine && <View style={{ width: 12 }} />}
             </View>
@@ -563,6 +612,6 @@ export function MessageRow({
           <ReadReceipts readBy={readBy} isGroup={isGroup} />
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 }

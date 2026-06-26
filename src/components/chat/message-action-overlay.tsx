@@ -1,8 +1,7 @@
 import { BlurView } from 'expo-blur';
 import { useColorScheme } from 'nativewind';
 import * as React from 'react';
-import { Dimensions, Linking, Modal, Pressable, StyleSheet, View } from 'react-native';
-import { EnrichedText } from 'react-native-enriched-html';
+import { Dimensions, Modal, Pressable, StyleSheet, View } from 'react-native';
 import Animated, {
   // eslint-disable-next-line deprecation/deprecation
   runOnJS,
@@ -15,13 +14,9 @@ import type { Message } from '@/api/types';
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
 import { ANIM_FAST } from '@/constants/animation';
-import { Colors, Fonts, Palette } from '@/constants/theme';
-import { htmlToPlainText } from '@/lib/mentions';
+import { Colors } from '@/constants/theme';
 
-import { EmojiDrawer } from './emoji-drawer';
-import { MENTION_TEXT_HTML_STYLE } from './mention-views';
-import { MessageAttachments } from './message-attachments';
-import { avatarColor } from './participant-avatar';
+import { BubbleContent } from './message-bubble';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -43,6 +38,8 @@ export interface MessageActionOverlayProps {
   onForward: () => void;
   onCopy: () => void;
   onPin: () => void;
+  /** Open the full emoji picker (handled by the parent, after this overlay closes). */
+  onOpenEmojiPicker: () => void;
   /**
    * The exact sender name the in-list bubble rendered (undefined when it showed
    * none), so the selected replica mirrors it precisely.
@@ -59,104 +56,6 @@ const ACTION_ITEM_H = 48;
 const ACTION_COUNT = 4;    // Reply, Forward, Copy, Pin
 const ACTION_MENU_H = ACTION_ITEM_H * ACTION_COUNT + 16;
 const MARGIN = 10;
-
-// ─── Bubble content replica (no avatar / sender chrome) ──────────────────────
-
-function BubbleCopy({
-  message,
-  isMine,
-  senderName,
-}: {
-  message: Message;
-  isMine: boolean;
-  senderName?: string;
-}) {
-  const { colorScheme } = useColorScheme();
-  const theme = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
-
-  const attachments = message.attachments ?? [];
-  const hasAttachments = attachments.length > 0;
-  const hasText = message.content.trim().length > 0;
-  const align = isMine ? 'flex-end' : 'flex-start';
-
-  const senderNameEl = senderName ? (
-    <Text
-      style={{ fontSize: 12, fontWeight: '600', color: avatarColor(message.sender_id), marginBottom: 2 }}>
-      {senderName}
-    </Text>
-  ) : null;
-
-  const replyEl = message.reply_to ? (
-    <View
-      style={{
-        borderLeftWidth: 2,
-        borderLeftColor: Palette.accentStart,
-        paddingLeft: 8,
-        marginBottom: 6,
-        opacity: 0.7,
-        alignSelf: 'stretch',
-      }}>
-      <Text style={{ color: isMine && !hasAttachments ? '#ddd' : theme.textSecondary, fontSize: 11, fontWeight: '600' }}>
-        {message.reply_to.sender_name}
-      </Text>
-      <Text style={{ color: isMine && !hasAttachments ? '#ddd' : theme.textSecondary, fontSize: 12 }} numberOfLines={1}>
-        {htmlToPlainText(message.reply_to.content)}
-      </Text>
-    </View>
-  ) : null;
-
-  const textColor = isMine && !hasAttachments ? Palette.white : theme.text;
-
-  /*
-    EnrichedText renders the same chips as the in-list bubble while staying
-    natively selectable — a long-pressed message mirrors the bubble exactly and
-    its text can still be highlighted/copied.
-  */
-  const textEl = !hasText ? null : (
-    <EnrichedText
-      selectable
-      htmlStyle={MENTION_TEXT_HTML_STYLE}
-      onLinkPress={(e) => Linking.openURL(e.url)}
-      className='text-base leading-5'
-      style={{
-        marginTop: hasAttachments ? 3 : 0,
-        alignSelf: 'stretch',
-        color: textColor,
-        fontFamily: Fonts.sans,
-      }}>
-      {message.content}
-    </EnrichedText>
-  );
-
-  // Attachment messages drop the bubble chrome, matching the in-list bubble.
-  if (hasAttachments) {
-    return (
-      <View style={{ alignSelf: isMine ? 'flex-end' : 'flex-start', maxWidth: '100%', alignItems: align }}>
-        {senderNameEl}
-        {replyEl}
-        <MessageAttachments attachments={attachments} align={align} />
-        {textEl}
-      </View>
-    );
-  }
-
-  return (
-    <View
-      style={{
-        alignSelf: isMine ? 'flex-end' : 'flex-start',
-        maxWidth: '100%',
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        backgroundColor: isMine ? Palette.black : theme.backgroundElement,
-        borderWidth: isMine ? 0 : 1,
-        borderColor: '#131211',
-      }}>
-      {senderNameEl}
-      {replyEl}
-      {textEl}
-    </View>
-  );
-}
 
 // ─── Quick emoji strip ────────────────────────────────────────────────────────
 
@@ -299,19 +198,24 @@ export function MessageActionOverlay({
   onForward,
   onCopy,
   onPin,
+  onOpenEmojiPicker,
   senderName,
 }: MessageActionOverlayProps) {
   const { colorScheme } = useColorScheme();
-  const [drawerOpen, setDrawerOpen] = React.useState(false);
 
   // Fade in on mount; fade out before calling onDismiss.
   const opacity = useSharedValue(0);
+  // The in-list bubble was swelled to ~1.06 by the long-press; the replica picks
+  // up at that scale and settles to 1.0 so the hand-off looks continuous.
+  const bubbleScale = useSharedValue(1.06);
   React.useEffect(() => {
     opacity.value = withTiming(1, ANIM_FAST);
+    bubbleScale.value = withTiming(1, ANIM_FAST);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fadeStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const bubbleScaleStyle = useAnimatedStyle(() => ({ transform: [{ scale: bubbleScale.value }] }));
 
   const startDismiss = React.useCallback(() => {
     // eslint-disable-next-line deprecation/deprecation
@@ -383,21 +287,26 @@ export function MessageActionOverlay({
               onReact(emoji);
               startDismiss();
             }}
-            onOpenDrawer={() => setDrawerOpen(true)}
+            onOpenDrawer={onOpenEmojiPicker}
           />
 
-          {/* Bubble replica at its original position — selectable so the selected
-              message's text can be highlighted/copied in place. */}
+          {/* The selected bubble is the real in-list bubble component, rendered in
+              an identical width context so it's pixel-identical to the original:
+              a full-width row pinned at the bubble's measured y, with the same
+              left gutter (the measured x) and 12px trailing inset the list uses.
+              `selectable` lets the text be highlighted/copied in place. */}
           <View
+            pointerEvents="box-none"
             style={{
               position: 'absolute',
               top: layout.y,
-              left: layout.x,
-              width: layout.width,
-              height: layout.height,
-              justifyContent: 'center',
+              left: isMine ? 0 : layout.x,
+              right: isMine ? 0 : 12,
+              alignItems: isMine ? 'flex-end' : 'flex-start',
             }}>
-            <BubbleCopy message={message} isMine={isMine} senderName={senderName} />
+            <Animated.View style={bubbleScaleStyle}>
+              <BubbleContent message={message} isMine={isMine} senderName={senderName} selectable />
+            </Animated.View>
           </View>
 
           {/* Action menu */}
@@ -407,16 +316,6 @@ export function MessageActionOverlay({
           />
         </Animated.View>
       </Modal>
-
-      {/* Full emoji drawer (separate modal on top) */}
-      <EmojiDrawer
-        visible={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        onSelect={(emoji) => {
-          onReact(emoji);
-          startDismiss();
-        }}
-      />
     </>
   );
 }

@@ -2,10 +2,9 @@ import { apiFetch } from './client';
 import type { LoginResponse, User } from './types';
 
 export interface LoginParams {
-  email?: string;
-  username?: string;
+  /** Email or username; the backend resolves the tenant from it. */
+  identifier: string;
   password: string;
-  tenant_slug: string;
 }
 
 export function login(params: LoginParams): Promise<LoginResponse> {

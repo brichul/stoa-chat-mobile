@@ -3,6 +3,12 @@ import * as ImagePicker from 'expo-image-picker';
 import { useColorScheme } from 'nativewind';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import Animated, {
+  LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import {
   EnrichedTextInput,
   type EnrichedTextInputInstance,
@@ -10,6 +16,8 @@ import {
   type OnChangeTextEvent,
 } from 'react-native-enriched-html';
 import type { NativeSyntheticEvent } from 'react-native';
+
+import { ANIM_FAST } from '@/constants/animation';
 
 import type { Message, Participant } from '@/api/types';
 import { Icon } from '@/components/icons/icon';
@@ -71,6 +79,27 @@ export interface MessageComposerProps {
   participants?: Participant[];
 }
 
+// A single change that inserts at least this many characters is treated as a
+// paste and lifted out into a `text` attachment rather than flooding the input.
+const PASTE_AS_ATTACHMENT_THRESHOLD = 300;
+
+/**
+ * The chunk inserted between `prev` and `next`, found by trimming the shared
+ * prefix and suffix. Handles a paste at any cursor position.
+ */
+function insertedChunk(prev: string, next: string): string {
+  let start = 0;
+  const minLen = Math.min(prev.length, next.length);
+  while (start < minLen && prev[start] === next[start]) start++;
+  let endPrev = prev.length - 1;
+  let endNext = next.length - 1;
+  while (endNext >= start && endPrev >= start && prev[endPrev] === next[endNext]) {
+    endPrev--;
+    endNext--;
+  }
+  return next.slice(start, endNext + 1);
+}
+
 export function MessageComposer({
   onSend,
   placeholder = 'Message',
@@ -88,10 +117,26 @@ export function MessageComposer({
   const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [pickerMode, setPickerMode] = React.useState<AttachPickerMode>(null);
 
+  // Paste-as-attachment bookkeeping. `prevPlainRef` is the plain text before the
+  // latest change (to diff for pastes); `lastHtmlRef` is a recent HTML snapshot
+  // we can revert to — restoring it preserves any mention/link chips a plain
+  // revert would flatten. The snapshot refresh is debounced to avoid parsing
+  // HTML on every keystroke.
+  const prevPlainRef = React.useRef('');
+  const lastHtmlRef = React.useRef('');
+  const htmlRefreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Active @-mention query (null when no mention is being edited).
   const [mentionQuery, setMentionQuery] = React.useState<string | null>(null);
 
   const insets = useSafeAreaInsets();
+
+  React.useEffect(
+    () => () => {
+      if (htmlRefreshTimer.current) clearTimeout(htmlRefreshTimer.current);
+    },
+    []
+  );
 
   const directory = React.useMemo(() => buildDirectory(participants), [participants]);
   const suggestions = React.useMemo(
@@ -101,19 +146,66 @@ export function MessageComposer({
 
   const canSend = plainText.trim().length > 0 || attachments.length > 0;
 
+  // ── Compose bubble: a black bubble grows from the bottom-left to fill the
+  //    input while the user is writing (text flips to white over it).
+  const composing = plainText.trim().length > 0;
+  const fill = useSharedValue(0);
+  React.useEffect(() => {
+    fill.value = withTiming(composing ? 1 : 0, ANIM_FAST);
+  }, [composing, fill]);
+  const fillStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleX: fill.value }, { scaleY: fill.value }],
+  }));
+
   const handleSend = async () => {
     if (!canSend) return;
     const hasText = plainText.trim().length > 0;
     const html = hasText ? (await inputRef.current?.getHTML()) ?? '' : '';
     onSend(html, attachments);
-    inputRef.current?.setValue('');
-    setPlainText('');
+    resetInput();
     setAttachments([]);
     setMentionQuery(null);
   };
 
   const addAttachments = (next: Attachment[]) => {
     if (next.length) setAttachments((prev) => [...prev, ...next]);
+  };
+
+  // Debounced HTML snapshot so a paste can revert to pre-paste content (chips
+  // intact) without parsing HTML on every keystroke.
+  const scheduleHtmlSnapshot = () => {
+    if (htmlRefreshTimer.current) clearTimeout(htmlRefreshTimer.current);
+    htmlRefreshTimer.current = setTimeout(async () => {
+      lastHtmlRef.current = (await inputRef.current?.getHTML()) ?? '';
+    }, 150);
+  };
+
+  const resetInput = () => {
+    inputRef.current?.setValue('');
+    prevPlainRef.current = '';
+    lastHtmlRef.current = '';
+    setPlainText('');
+  };
+
+  // Detect a large single insertion (a paste) and lift it into a `text`
+  // attachment, reverting the editor to its pre-paste HTML snapshot.
+  const handleChangeText = (value: string) => {
+    const prev = prevPlainRef.current;
+    if (value.length - prev.length >= PASTE_AS_ATTACHMENT_THRESHOLD) {
+      const chunk = insertedChunk(prev, value);
+      if (chunk.length >= PASTE_AS_ATTACHMENT_THRESHOLD) {
+        addAttachments([{ kind: 'text', name: 'Pasted text', text: chunk.trim() }]);
+        const beforeHtml = lastHtmlRef.current;
+        const beforePlain = beforeHtml ? htmlToPlainText(beforeHtml) : prev;
+        inputRef.current?.setValue(beforeHtml || prev);
+        prevPlainRef.current = beforePlain;
+        setPlainText(beforePlain);
+        return;
+      }
+    }
+    prevPlainRef.current = value;
+    setPlainText(value);
+    scheduleHtmlSnapshot();
   };
 
   // A picker selection finalizes the in-progress mention as a chip. setMention
@@ -238,38 +330,59 @@ export function MessageComposer({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <EnrichedTextInput
-          ref={inputRef}
-          mentionIndicators={[MENTION_INDICATOR]}
-          // No markdown-style shortcuts (e.g. "- " → list); messages stay plain
-          // text + mentions + links. Link auto-detection stays on (default
-          // linkRegex) so typed URLs become tappable <a> chips.
-          textShortcuts={[]}
-          placeholder={placeholder}
-          placeholderTextColor={theme.textSecondary}
-          cursorColor={Palette.accentStart}
-          selectionColor={Palette.accentStart}
-          htmlStyle={MENTION_INPUT_HTML_STYLE}
-          onChangeText={(e: NativeSyntheticEvent<OnChangeTextEvent>) =>
-            setPlainText(e.nativeEvent.value)
-          }
-          onStartMention={() => setMentionQuery('')}
-          onChangeMention={(e: OnChangeMentionEvent) => setMentionQuery(e.text)}
-          onEndMention={() => setMentionQuery(null)}
-          style={{
-            flex: 1,
-            minHeight: 48,
-            maxHeight: 140,
-            borderWidth: 2,
-            borderColor: '#131211',
-            paddingHorizontal: 12,
-            paddingVertical: 12,
-            color: theme.text,
-            fontFamily: Fonts.sans,
-            fontSize: 16,
-            lineHeight: 20,
-          }}
-        />
+        <Animated.View
+          layout={LinearTransition.duration(160)}
+          style={{ flex: 1, position: 'relative' }}>
+          {/* Black bubble that grows from the bottom-left to fill the input. */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: Palette.black,
+                transformOrigin: 'left bottom',
+              },
+              fillStyle,
+            ]}
+          />
+          <EnrichedTextInput
+            ref={inputRef}
+            mentionIndicators={[MENTION_INDICATOR]}
+            // No markdown-style shortcuts (e.g. "- " → list); messages stay plain
+            // text + mentions + links. Link auto-detection stays on (default
+            // linkRegex) so typed URLs become tappable <a> chips.
+            textShortcuts={[]}
+            placeholder={placeholder}
+            placeholderTextColor={theme.textSecondary}
+            cursorColor={composing ? Palette.white : Palette.accentStart}
+            selectionColor={Palette.accentStart}
+            htmlStyle={MENTION_INPUT_HTML_STYLE}
+            onChangeText={(e: NativeSyntheticEvent<OnChangeTextEvent>) =>
+              handleChangeText(e.nativeEvent.value)
+            }
+            onStartMention={() => setMentionQuery('')}
+            onChangeMention={(e: OnChangeMentionEvent) => setMentionQuery(e.text)}
+            onEndMention={() => setMentionQuery(null)}
+            style={{
+              alignSelf: 'stretch',
+              minHeight: 48,
+              maxHeight: 140,
+              borderWidth: 2,
+              borderColor: '#131211',
+              paddingHorizontal: 12,
+              paddingVertical: 12,
+              backgroundColor: 'transparent',
+              color: composing ? Palette.white : theme.text,
+              fontFamily: Fonts.sans,
+              fontSize: 16,
+              lineHeight: 20,
+            }}
+          />
+        </Animated.View>
 
         <Pressable
           onPress={handleSend}

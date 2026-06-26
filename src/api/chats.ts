@@ -91,6 +91,14 @@ export function addParticipant(
   return apiFetch(`/chats/${chatId}/participants`, { method: 'POST', json: { id, type, permission } });
 }
 
+/** Remove a participant (or leave, when removing yourself). Owner-only for others. */
+export function removeParticipant(
+  chatId: string,
+  participantId: string
+): Promise<{ success: boolean }> {
+  return apiFetch(`/chats/${chatId}/participants/${participantId}`, { method: 'DELETE' });
+}
+
 export function pinChat(chatId: string): Promise<{ success: boolean }> {
   return apiFetch(`/chats/${chatId}/pin`, { method: 'POST' });
 }

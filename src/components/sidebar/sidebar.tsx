@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, {
@@ -58,7 +59,16 @@ function ChatRow({ title, onPress }: { title: string; onPress: () => void }) {
 
 function ProfileMenu({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { user, logout } = useAuth();
+  const { closeSidebar } = useWorkspace();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
+
+  // Navigate to one of the profile screens, dismissing both the menu and sidebar.
+  const go = (path: '/profile' | '/profile-edit') => {
+    onClose();
+    closeSidebar();
+    router.push(path);
+  };
 
   // Keep modal mounted during exit animation.
   const [showing, setShowing] = React.useState(false);
@@ -89,8 +99,10 @@ function ProfileMenu({ visible, onClose }: { visible: boolean; onClose: () => vo
           className="absolute bottom-0 left-0 right-0 rounded-t-2xl overflow-hidden"
           onStartShouldSetResponder={() => true}>
           <View style={{ backgroundColor: '#1C1B1A' }}>
-            {/* Profile row */}
-            <View className="flex-row items-center gap-3 px-5 py-4 border-b border-white/10">
+            {/* Profile row — tap to view your profile */}
+            <Pressable
+              onPress={() => go('/profile')}
+              className="flex-row items-center gap-3 px-5 py-4 border-b border-white/10 active:bg-white/10">
               <UserAvatar size={40} />
               <View className="flex-1">
                 <Text className="text-base font-semibold" style={{ color: FG }}>
@@ -102,11 +114,12 @@ function ProfileMenu({ visible, onClose }: { visible: boolean; onClose: () => vo
                   </Text>
                 ) : null}
               </View>
-            </View>
+              <Icon name="chevron-right" size={20} color={MUTED} />
+            </Pressable>
 
             {/* Actions */}
             <Pressable
-              onPress={onClose}
+              onPress={() => go('/profile')}
               className="flex-row items-center gap-3 px-5 py-4 active:bg-white/10">
               <Icon name="person" size={20} color={FG} />
               <Text className="text-base" style={{ color: FG }}>
@@ -114,11 +127,11 @@ function ProfileMenu({ visible, onClose }: { visible: boolean; onClose: () => vo
               </Text>
             </Pressable>
             <Pressable
-              onPress={onClose}
+              onPress={() => go('/profile-edit')}
               className="flex-row items-center gap-3 px-5 py-4 active:bg-white/10">
-              <Icon name="settings" size={20} color={FG} />
+              <Icon name="edit" size={20} color={FG} />
               <Text className="text-base" style={{ color: FG }}>
-                Settings
+                Edit profile
               </Text>
             </Pressable>
             <View className="h-px mx-4 bg-white/10" />

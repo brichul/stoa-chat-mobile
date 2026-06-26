@@ -12,7 +12,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (params: authApi.LoginParams) => Promise<void>;
+  login: (params: authApi.LoginParams, remember?: boolean) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -68,16 +68,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => setUnauthorizedHandler(null);
   }, [doLogout]);
 
-  const login = React.useCallback(async (params: authApi.LoginParams) => {
+  const login = React.useCallback(async (params: authApi.LoginParams, remember = true) => {
     const res = await authApi.login(params);
+    // The backend resolves the tenant from the email and returns it.
+    const tenantSlug = res.tenant_slug || '';
     setAuthToken(res.access_token);
     refreshTokenRef.current = res.refresh_token;
-    await saveSession({
-      accessToken: res.access_token,
-      refreshToken: res.refresh_token,
-      tenantSlug: params.tenant_slug,
-    });
-    setState({ user: res.user, tenantSlug: params.tenant_slug, status: 'authenticated' });
+    // "Remember me": only persist the session to disk when requested, so it
+    // survives an app restart. Otherwise it lives only for this app session.
+    if (remember) {
+      await saveSession({
+        accessToken: res.access_token,
+        refreshToken: res.refresh_token,
+        tenantSlug,
+      });
+    } else {
+      await clearSession();
+    }
+    setState({ user: res.user, tenantSlug, status: 'authenticated' });
   }, []);
 
   const value = React.useMemo<AuthContextValue>(

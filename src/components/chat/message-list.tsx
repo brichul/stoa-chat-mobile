@@ -1,5 +1,10 @@
 import * as React from 'react';
-import { FlatList, View } from 'react-native';
+import {
+  FlatList,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  View,
+} from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   // eslint-disable-next-line deprecation/deprecation
@@ -40,6 +45,9 @@ type ListItem = DateHeaderItem | MessageItem;
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const GROUP_GAP_MS = 5 * 60 * 1000;
+
+// How many list items (messages + date headers) to reveal per lazy-load page.
+const PAGE_SIZE = 30;
 
 function formatDateHeader(ts: number): string {
   const now = new Date();
@@ -166,23 +174,55 @@ export function MessageList({
   // ── Shared animated value: drives timestamp reveal across all rows ──────────
   const showTimestamps = useSharedValue(0);
 
+  // ── Lazy load: render only the most recent window, revealing older ones as the
+  //    user scrolls toward the top. `atBottom` gates auto-scroll so loading older
+  //    pages (which prepend) doesn't yank the view to the bottom.
+  const [limit, setLimit] = React.useState(PAGE_SIZE);
+  const atBottomRef = React.useRef(true);
+  const windowStart = Math.max(0, items.length - limit);
+  const windowed = React.useMemo(() => items.slice(windowStart), [items, windowStart]);
+
+  // Messages created after the screen opened animate in; the initial batch doesn't.
+  const mountTimeRef = React.useRef(Date.now());
+
   // ── Reply-jump: scroll to the original message and flash it ──────────────────
   const highlightedId = useSharedValue<string | null>(null);
 
   const scrollToMessage = React.useCallback(
     (messageId: string) => {
-      const index = items.findIndex(
+      const fullIndex = items.findIndex(
         (it) => it.kind === 'message' && it.message.id === messageId
       );
-      if (index < 0) return; // target not in the loaded window
-      listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
-      // Let the scroll settle before flashing so it lands in view.
+      if (fullIndex < 0) return; // not loaded at all
+      // Make sure the target is inside the rendered window, expanding it if needed.
+      const targetLimit = Math.max(limit, items.length - fullIndex + 4);
+      if (targetLimit !== limit) setLimit(targetLimit);
+      const start = Math.max(0, items.length - targetLimit);
+      const index = fullIndex - start;
       highlightedId.value = null;
-      setTimeout(() => {
-        highlightedId.value = messageId;
-      }, 250);
+      setTimeout(
+        () => {
+          listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
+          setTimeout(() => {
+            highlightedId.value = messageId;
+          }, 250);
+        },
+        targetLimit !== limit ? 80 : 0
+      );
     },
-    [items, highlightedId]
+    [items, limit, highlightedId]
+  );
+
+  const handleScroll = React.useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      atBottomRef.current =
+        contentOffset.y >= contentSize.height - layoutMeasurement.height - 48;
+      if (contentOffset.y < 80) {
+        setLimit((l) => (l < items.length ? Math.min(items.length, l + PAGE_SIZE) : l));
+      }
+    },
+    [items.length]
   );
 
   // Track where the touch began (to restrict sidebar gesture to left edge).
@@ -241,10 +281,19 @@ export function MessageList({
         ) : (
           <FlatList
             ref={listRef}
-            data={items}
+            data={windowed}
             keyExtractor={(item) => item.key}
             contentContainerStyle={{ paddingVertical: 8 }}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            onScroll={handleScroll}
+            scrollEventThrottle={32}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            onContentSizeChange={() => {
+              // Pin to the bottom on initial load and when a new message lands while
+              // the user is already at the bottom — but never when loading older pages.
+              if (atBottomRef.current) listRef.current?.scrollToEnd({ animated: false });
+            }}
             onScrollToIndexFailed={({ index }) => {
               // No getItemLayout, so a distant index can fail; nudge then retry.
               listRef.current?.scrollToOffset({ offset: index * 64, animated: true });
@@ -273,6 +322,7 @@ export function MessageList({
                   onSwipeReply={onSwipeReply}
                   onShowReactions={onShowReactions}
                   onPressReply={scrollToMessage}
+                  animateIn={item.message.timestamp >= mountTimeRef.current}
                 />
               );
             }}

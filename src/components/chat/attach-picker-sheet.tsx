@@ -9,11 +9,13 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { listNodeDirectory } from '@/api/nodes';
+import { listVaults } from '@/api/vaults';
+import type { NodeRef, Vault } from '@/api/types';
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
 import { ANIM_SLOW } from '@/constants/animation';
 import { Colors } from '@/constants/theme';
-import { MOCK_NODES, MOCK_VAULTS } from '@/data/mock';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -67,9 +69,22 @@ export function AttachPickerSheet({ mode, onClose, onSelect }: AttachPickerSheet
   }));
 
   const isNode = mode === 'node';
+
+  const [nodes, setNodes] = React.useState<NodeRef[]>([]);
+  const [vaults, setVaults] = React.useState<Vault[]>([]);
+
+  // Fetch the relevant list when the sheet opens for a given mode.
+  React.useEffect(() => {
+    if (mode === 'node') {
+      listNodeDirectory().then(setNodes).catch(() => setNodes([]));
+    } else if (mode === 'vault') {
+      listVaults().then(setVaults).catch(() => setVaults([]));
+    }
+  }, [mode]);
+
   const items = isNode
-    ? MOCK_NODES.map((n) => ({ id: n.id, name: n.title ?? n.id, subtitle: n.status }))
-    : MOCK_VAULTS.map((v) => ({ id: v.id, name: v.name ?? v.id, subtitle: v.type }));
+    ? nodes.map((n) => ({ id: n.id, name: n.title ?? n.id, subtitle: n.status }))
+    : vaults.map((v) => ({ id: v.id, name: v.name ?? v.id, subtitle: v.type }));
 
   return (
     <Modal transparent visible={showing} animationType="none" onRequestClose={onClose}>

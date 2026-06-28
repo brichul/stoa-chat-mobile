@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import type { Participant } from '@/api/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Text } from '@/components/ui/text';
+import { authImageSource } from '@/lib/auth-image';
 
 const PALETTE = ['#98514B', '#5B7FA6', '#5B8C6B', '#7B6B9A', '#A67B5B', '#4E7A7A'];
 
@@ -55,7 +56,7 @@ export function ParticipantAvatar({
     <Avatar
       alt={initial}
       style={[{ width: size, height: size, borderRadius: size / 2 }, style]}>
-      <AvatarImage source={{ uri: participant.avatar_url }} />
+      <AvatarImage source={authImageSource(participant.avatar_url)} />
       <AvatarFallback style={{ backgroundColor: bg }}>
         <Text style={{ color: '#fff', fontSize: size * 0.42, fontWeight: '600' }}>{initial}</Text>
       </AvatarFallback>

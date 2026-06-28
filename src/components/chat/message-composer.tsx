@@ -30,12 +30,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { listBots } from '@/api/bots';
+import { listNodeDirectory } from '@/api/nodes';
+import { listUsers } from '@/api/users';
+import { listVaults } from '@/api/vaults';
 import { Text } from '@/components/ui/text';
 import { Colors, Fonts, Palette } from '@/constants/theme';
 import {
   buildDirectory,
   htmlToPlainText,
   MENTION_INDICATOR,
+  type MentionDirectorySource,
   type MentionRef,
   searchDirectory,
 } from '@/lib/mentions';
@@ -138,7 +143,26 @@ export function MessageComposer({
     []
   );
 
-  const directory = React.useMemo(() => buildDirectory(participants), [participants]);
+  // Fetch the tenant directory (people / bots / nodes / vaults) once for @-mentions.
+  const [dirSource, setDirSource] = React.useState<MentionDirectorySource | null>(null);
+  React.useEffect(() => {
+    let active = true;
+    Promise.all([listUsers(), listBots(), listNodeDirectory(), listVaults()])
+      .then(([users, bots, nodes, vaults]) => {
+        if (active) setDirSource({ users, bots, nodes, vaults });
+      })
+      .catch(() => {
+        /* mentions just stay limited to chat participants on failure */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const directory = React.useMemo(
+    () => buildDirectory(participants, dirSource ?? undefined),
+    [participants, dirSource]
+  );
   const suggestions = React.useMemo(
     () => (mentionQuery == null ? null : searchDirectory(directory, mentionQuery)),
     [directory, mentionQuery]

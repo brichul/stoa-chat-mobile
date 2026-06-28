@@ -7,6 +7,7 @@ import type { MessageAttachment, MessageAttachmentKind } from '@/api/types';
 import { Icon, type IconName } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
 import { Colors } from '@/constants/theme';
+import { authImageSource } from '@/lib/auth-image';
 
 import { ImageViewer } from './image-viewer';
 import { TextAttachmentDrawer } from './text-attachment-drawer';
@@ -113,7 +114,7 @@ function Photo({
   if (compact) {
     return (
       <Image
-        source={{ uri: attachment.uri }}
+        source={authImageSource(attachment.uri)}
         style={{ width: 56, height: 56, borderRadius: 10 }}
         contentFit="cover"
         transition={150}
@@ -127,7 +128,7 @@ function Photo({
   return (
     <Pressable onPress={onPress} disabled={!onPress}>
       <Image
-        source={{ uri: attachment.uri }}
+        source={authImageSource(attachment.uri)}
         style={{ width: MEDIA_WIDTH, aspectRatio: aspect, borderRadius: 14 }}
         contentFit="cover"
         transition={150}
@@ -153,7 +154,7 @@ function LinkCard({ attachment }: { attachment: MessageAttachment }) {
       }}>
       {attachment.previewImageUrl ? (
         <Image
-          source={{ uri: attachment.previewImageUrl }}
+          source={authImageSource(attachment.previewImageUrl)}
           style={{ width: MEDIA_WIDTH, height: 130 }}
           contentFit="cover"
           transition={150}

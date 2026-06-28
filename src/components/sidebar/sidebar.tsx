@@ -18,8 +18,11 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Text } from '@/components/ui/text';
 import { Palette } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth-context';
+import { useChats } from '@/contexts/chats-context';
 import { useWorkspace } from '@/contexts/workspace-context';
-import { MOCK_CHATS } from '@/data/mock';
+import { useCurrentUserId } from '@/hooks/use-current-user-id';
+import { authImageSource } from '@/lib/auth-image';
+import { chatDisplayTitle } from '@/lib/chat-title';
 
 // Sidebar is always dark (STYLING.md black), independent of the system theme.
 const FG = Palette.white;
@@ -161,7 +164,7 @@ function UserAvatar({ size = 32 }: { size?: number }) {
       alt={initial}
       style={{ width: size, height: size, borderRadius: size / 2, overflow: 'hidden' }}>
       {user?.avatar_url ? (
-        <AvatarImage source={{ uri: user.avatar_url }} />
+        <AvatarImage source={authImageSource(user.avatar_url)} />
       ) : null}
       <AvatarFallback style={{ backgroundColor: '#98514B' }}>
         <Text style={{ color: '#fff', fontSize: size * 0.42, fontWeight: '600' }}>{initial}</Text>
@@ -173,6 +176,8 @@ function UserAvatar({ size = 32 }: { size?: number }) {
 export function Sidebar() {
   const insets = useSafeAreaInsets();
   const { closeSidebar, setActiveChat, openGraph, newChat, uploadData } = useWorkspace();
+  const { chats } = useChats();
+  const currentUserId = useCurrentUserId();
   const [query, setQuery] = React.useState('');
   const [profileOpen, setProfileOpen] = React.useState(false);
 
@@ -182,12 +187,13 @@ export function Sidebar() {
     { key: 'new', label: 'New chat', icon: 'stoa-agent', onPress: newChat },
   ];
 
-  const recentChats = MOCK_CHATS.filter((c) =>
-    (c.name ?? '').toLowerCase().includes(query.trim().toLowerCase())
+  const needle = query.trim().toLowerCase();
+  const recentChats = chats.filter((c) =>
+    chatDisplayTitle(c, currentUserId).toLowerCase().includes(needle)
   );
 
   const openChat = (id: string) => {
-    const chat = MOCK_CHATS.find((c) => c.id === id);
+    const chat = chats.find((c) => c.id === id);
     if (chat) setActiveChat(chat);
     closeSidebar();
   };
@@ -239,7 +245,11 @@ export function Sidebar() {
       {/* Recent chat buttons (generated from array). */}
       <ScrollView className="flex-1 px-2" contentContainerClassName="pb-6">
         {recentChats.map((c) => (
-          <ChatRow key={c.id} title={c.name ?? 'Untitled chat'} onPress={() => openChat(c.id)} />
+          <ChatRow
+            key={c.id}
+            title={chatDisplayTitle(c, currentUserId)}
+            onPress={() => openChat(c.id)}
+          />
         ))}
       </ScrollView>
 

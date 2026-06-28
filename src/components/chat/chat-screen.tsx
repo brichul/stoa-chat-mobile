@@ -1,46 +1,168 @@
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { KeyboardAvoidingView, Platform, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Chat, Message, MessageAttachment } from '@/api/types';
+import { getAuthToken } from '@/api/client';
+import * as chatsApi from '@/api/chats';
+import { ChatSocket } from '@/api/chat-socket';
+import type { Chat, ChatSocketEvent, Message, MessageAttachment } from '@/api/types';
+import { uploadFile } from '@/api/uploads';
 import { ChatHeader } from '@/components/chat/chat-header';
 import { EmojiDrawer } from '@/components/chat/emoji-drawer';
 import { MessageComposer, type Attachment } from '@/components/chat/message-composer';
 import { MessageList } from '@/components/chat/message-list';
 import { ReactionsSheet } from '@/components/chat/reactions-sheet';
+import { Icon } from '@/components/icons/icon';
+import { Text } from '@/components/ui/text';
+import { useAuth } from '@/contexts/auth-context';
+import { useChats } from '@/contexts/chats-context';
 import { useWorkspace } from '@/contexts/workspace-context';
-import { CURRENT_USER_ID, MOCK_CHATS, MOCK_MESSAGES } from '@/data/mock';
+import { useCurrentUserId } from '@/hooks/use-current-user-id';
 import { extractFirstUrl, mockLinkPreview } from '@/lib/link-preview';
-import { extractMentionsFromHtml, htmlToPlainText, type MentionRef } from '@/lib/mentions';
+import { htmlToPlainText } from '@/lib/mentions';
 
 import {
   MessageActionOverlay,
   type MessageLayout,
 } from './message-action-overlay';
 
+/** Apply a realtime `reaction` event to a message's actor-id reaction map
+ *  (one reaction per actor — clear them from all emojis, then re-add on 'add'). */
+function applyReactionEvent(
+  m: Message,
+  ev: Extract<ChatSocketEvent, { type: 'reaction' }>
+): Message {
+  const reactions: Record<string, string[]> = {};
+  for (const [emoji, ids] of Object.entries(m.reactions ?? {})) {
+    const filtered = ids.filter((id) => id !== ev.actor_id);
+    if (filtered.length) reactions[emoji] = filtered;
+  }
+  if (ev.action === 'add') {
+    reactions[ev.emoji] = [...(reactions[ev.emoji] ?? []), ev.actor_id];
+  }
+  return { ...m, reactions };
+}
+
 export function ChatScreen() {
   const { activeChat, openSidebar } = useWorkspace();
   const router = useRouter();
+  const currentUserId = useCurrentUserId();
+  const { user } = useAuth();
+  const myName = user?.display_name || user?.username || 'You';
 
-  // Local copy of the chat so @-mentions can attach nodes/vaults and add
-  // participants in-place. Re-syncs when the active chat changes.
-  const [chat, setChat] = React.useState<Chat>(activeChat ?? MOCK_CHATS[0]);
+  // Local copy of the chat so realtime events (participant/node/vault adds) can
+  // update it in place. Re-syncs when the active chat changes.
+  const [chat, setChat] = React.useState<Chat | null>(activeChat);
   React.useEffect(() => {
-    setChat(activeChat ?? MOCK_CHATS[0]);
+    setChat(activeChat);
   }, [activeChat]);
 
   const [messages, setMessages] = React.useState<Message[]>([]);
+  const socketRef = React.useRef<ChatSocket | null>(null);
+
+  const chatId = chat?.id ?? null;
+
+  // ─── History ──────────────────────────────────────────────────────────────────
   React.useEffect(() => {
-    setMessages(MOCK_MESSAGES[chat.id] ?? []);
-  }, [chat.id]);
+    if (!chatId) {
+      setMessages([]);
+      return;
+    }
+    let active = true;
+    setMessages([]);
+    chatsApi
+      .listMessages(chatId)
+      .then((res) => {
+        if (active) setMessages(res.messages);
+      })
+      .catch(() => {
+        /* surfaced via empty state for now */
+      });
+    return () => {
+      active = false;
+    };
+  }, [chatId]);
+
+  // ─── Realtime socket ───────────────────────────────────────────────────────────
+  const handleEvent = React.useCallback((ev: ChatSocketEvent) => {
+    switch (ev.type) {
+      case 'message': {
+        const msg = ev as Message;
+        setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+        break;
+      }
+      case 'reaction':
+        setMessages((prev) =>
+          prev.map((m) => (m.id === ev.message_id ? applyReactionEvent(m, ev) : m))
+        );
+        break;
+      case 'participant_added':
+        setChat((prev) => {
+          if (!prev) return prev;
+          const p = ev.participant;
+          if (!p.id || prev.participants.some((x) => x.id === p.id)) return prev;
+          return { ...prev, participants: [...prev.participants, p as Chat['participants'][number]] };
+        });
+        break;
+      case 'node_attached':
+        setChat((prev) => {
+          if (!prev || (prev.attached_nodes ?? []).includes(ev.node.id)) return prev;
+          return {
+            ...prev,
+            attached_nodes: [...(prev.attached_nodes ?? []), ev.node.id],
+            attached_nodes_detail: [...(prev.attached_nodes_detail ?? []), ev.node],
+          };
+        });
+        break;
+      case 'vault_attached':
+        setChat((prev) => {
+          if (!prev || (prev.attached_vaults ?? []).includes(ev.vault.id)) return prev;
+          return {
+            ...prev,
+            attached_vaults: [...(prev.attached_vaults ?? []), ev.vault.id],
+            attached_vaults_detail: [...(prev.attached_vaults_detail ?? []), ev.vault],
+          };
+        });
+        break;
+      case 'join':
+      case 'leave':
+      case 'system': {
+        // Append as a system message, but skip the connection welcome frame.
+        const e = ev as any;
+        if (e.sender_id === 'system' && e.metadata) break;
+        if (e.id && e.content) {
+          setMessages((prev) =>
+            prev.some((m) => m.id === e.id)
+              ? prev
+              : [...prev, { ...e, sender_name: e.sender_name ?? '' } as Message]
+          );
+        }
+        break;
+      }
+      // 'typing' and 'read' are not surfaced in the UI yet.
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const token = getAuthToken();
+    if (!chatId || !token) return;
+    const socket = new ChatSocket(chatId, token);
+    socketRef.current = socket;
+    const off = socket.onEvent(handleEvent);
+    socket.connect();
+    return () => {
+      off();
+      socket.close();
+      socketRef.current = null;
+    };
+  }, [chatId, handleEvent]);
 
   // ─── Selection overlay ──────────────────────────────────────────────────────
 
   const [selectedMessage, setSelectedMessage] = React.useState<Message | null>(null);
   const [selectedLayout, setSelectedLayout] = React.useState<MessageLayout | null>(null);
-  // The exact sender name the bubble rendered (undefined when it showed none),
-  // so the overlay replica mirrors the in-list bubble precisely.
   const [selectedSenderName, setSelectedSenderName] = React.useState<string | undefined>(undefined);
 
   const handleLongPress = (message: Message, layout: MessageLayout, senderName?: string) => {
@@ -56,8 +178,6 @@ export function ChatScreen() {
   };
 
   // ─── Full emoji picker ────────────────────────────────────────────────────────
-  // Lifted out of the overlay: presenting a second Modal while the overlay Modal
-  // is up fails on iOS, so we close the overlay first, then open the picker.
 
   const [emojiPickerFor, setEmojiPickerFor] = React.useState<Message | null>(null);
 
@@ -75,12 +195,10 @@ export function ChatScreen() {
 
   const [replyTo, setReplyTo] = React.useState<Message | null>(null);
 
-  // Quick reply from swipe gesture (no overlay needed)
   const handleSwipeReply = React.useCallback((message: Message) => {
     setReplyTo(message);
   }, []);
 
-  // Reply from long-press overlay
   const handleReply = () => {
     if (!selectedMessage) return;
     setReplyTo(selectedMessage);
@@ -88,8 +206,9 @@ export function ChatScreen() {
   };
 
   // ─── Forward ────────────────────────────────────────────────────────────────
-  // TODO: open a chat-picker sheet and call forwardMessage(chat.id, message.id, targetChatId)
-
+  // TODO(ui): open a chat-picker sheet, then call
+  // chatsApi.forwardMessage(chat.id, message.id, targetChatId). Endpoint + API
+  // client are ready; only the picker UI is outstanding.
   const handleForward = () => {
     dismissOverlay();
   };
@@ -102,134 +221,103 @@ export function ChatScreen() {
   };
 
   // ─── Pin ────────────────────────────────────────────────────────────────────
-  // TODO: call pinMessage API once endpoint exists
 
   const handlePin = () => {
-    if (!selectedMessage) return;
+    if (!selectedMessage || !chatId) return;
+    const target = selectedMessage;
+    const willPin = !target.is_pinned;
     setMessages((prev) =>
-      prev.map((m) =>
-        m.id === selectedMessage.id ? { ...m, is_pinned: !m.is_pinned } : m
-      )
+      prev.map((m) => (m.id === target.id ? { ...m, is_pinned: willPin } : m))
     );
+    const call = willPin
+      ? chatsApi.pinMessage(chatId, target.id)
+      : chatsApi.unpinMessage(chatId, target.id);
+    call.catch(() => {
+      // Revert on failure.
+      setMessages((prev) =>
+        prev.map((m) => (m.id === target.id ? { ...m, is_pinned: !willPin } : m))
+      );
+    });
     dismissOverlay();
   };
 
   // ─── React ──────────────────────────────────────────────────────────────────
 
-  // One reaction per person: tapping a new emoji moves the user's reaction off
-  // any other emoji; tapping the one they already have removes it (toggle off).
+  // One reaction per person: optimistic local update mirrors the backend, which
+  // also broadcasts a `reaction` event that reconciles idempotently.
   const handleReact = (messageId: string, emoji: string) => {
+    if (!chatId) return;
     setMessages((prev) =>
       prev.map((m) => {
         if (m.id !== messageId) return m;
         const reactions = { ...(m.reactions ?? {}) };
-        const alreadyReacted = reactions[emoji]?.includes(CURRENT_USER_ID) ?? false;
-
-        // Drop the user from every emoji first.
+        const alreadyReacted = reactions[emoji]?.includes(currentUserId) ?? false;
         for (const e of Object.keys(reactions)) {
-          const filtered = reactions[e].filter((id) => id !== CURRENT_USER_ID);
+          const filtered = reactions[e].filter((id) => id !== currentUserId);
           if (filtered.length) reactions[e] = filtered;
           else delete reactions[e];
         }
-        // Re-add only if this wasn't the emoji they already had.
         if (!alreadyReacted) {
-          reactions[emoji] = [...(reactions[emoji] ?? []), CURRENT_USER_ID];
+          reactions[emoji] = [...(reactions[emoji] ?? []), currentUserId];
         }
         return { ...m, reactions };
       })
     );
-    // TODO: wire to setReaction(chat.id, messageId, emoji) — backend enforces one per user
-  };
-
-  // ─── Mention side effects ─────────────────────────────────────────────────────
-  //
-  // Referencing something with @ attaches it to the chat: a user is added as a
-  // participant, a node/vault is attached. Applied to local chat state for now;
-  // each branch marks where the backend call slots in.
-
-  const applyMentionEffects = (refs: MentionRef[]) => {
-    if (!refs.length) return;
-    setChat((prev) => {
-      let participants = prev.participants;
-      let attachedNodes = prev.attached_nodes ?? [];
-      let nodesDetail = prev.attached_nodes_detail ?? [];
-      let attachedVaults = prev.attached_vaults ?? [];
-      let vaultsDetail = prev.attached_vaults_detail ?? [];
-      let changed = false;
-
-      for (const ref of refs) {
-        if (ref.kind === 'user') {
-          if (participants.some((p) => p.id === ref.id)) continue;
-          participants = [
-            ...participants,
-            {
-              id: ref.id,
-              type: 'user',
-              permission: 'write',
-              display_name: ref.label,
-              username: ref.inserted,
-              avatar_url: ref.avatar_url ?? null,
-              last_read_message_id: null,
-            },
-          ];
-          changed = true;
-          // TODO: POST /v1/chats/${prev.id}/participants { user_id: ref.id }
-        } else if (ref.kind === 'node') {
-          if (attachedNodes.includes(ref.id)) continue;
-          attachedNodes = [...attachedNodes, ref.id];
-          nodesDetail = [...nodesDetail, { id: ref.id, title: ref.label }];
-          changed = true;
-          // TODO: POST /v1/chats/${prev.id}/nodes { node_id: ref.id }
-        } else {
-          if (attachedVaults.includes(ref.id)) continue;
-          attachedVaults = [...attachedVaults, ref.id];
-          vaultsDetail = [...vaultsDetail, { id: ref.id, name: ref.label }];
-          changed = true;
-          // TODO: POST /v1/chats/${prev.id}/vaults { vault_id: ref.id }
-        }
-      }
-
-      if (!changed) return prev;
-      return {
-        ...prev,
-        participants,
-        attached_nodes: attachedNodes,
-        attached_nodes_detail: nodesDetail,
-        attached_vaults: attachedVaults,
-        attached_vaults_detail: vaultsDetail,
-      };
-    });
+    chatsApi.addReaction(chatId, messageId, emoji).catch(() => {});
   };
 
   // ─── Send ───────────────────────────────────────────────────────────────────
 
-  const handleSend = (text: string, attachments: Attachment[]) => {
-    const msgAttachments: MessageAttachment[] = attachments.map((a) => ({
-      kind: a.kind,
-      name: a.name,
-      uri: a.uri,
-      mimeType: a.mimeType,
-      size: a.size,
-      width: a.width,
-      height: a.height,
-      refId: a.refId,
-      subtitle: a.subtitle,
-      text: a.text,
-    }));
+  const handleSend = async (text: string, attachments: Attachment[]) => {
+    if (!chatId) return;
 
-    // Auto-detect a URL in the message and render it as a link preview card.
-    // `text` is enriched HTML, so flatten it first or the URL grabs trailing tags.
+    // Upload binary attachments (image/file) to get durable URLs; pass refs and
+    // text/link attachments through untouched.
+    const msgAttachments: MessageAttachment[] = [];
+    for (const a of attachments) {
+      if ((a.kind === 'image' || a.kind === 'file') && a.uri) {
+        try {
+          const up = await uploadFile({ uri: a.uri, name: a.name, mimeType: a.mimeType });
+          msgAttachments.push({
+            kind: a.kind,
+            name: up.name ?? a.name,
+            uri: up.url,
+            mimeType: up.mimeType ?? a.mimeType,
+            size: up.size ?? a.size,
+            width: a.width,
+            height: a.height,
+          });
+        } catch {
+          // Skip an attachment that failed to upload rather than blocking the send.
+        }
+      } else {
+        msgAttachments.push({
+          kind: a.kind,
+          name: a.name,
+          uri: a.uri,
+          mimeType: a.mimeType,
+          size: a.size,
+          width: a.width,
+          height: a.height,
+          refId: a.refId,
+          subtitle: a.subtitle,
+          text: a.text,
+        });
+      }
+    }
+
     const url = extractFirstUrl(htmlToPlainText(text));
     if (url && !msgAttachments.some((a) => a.kind === 'link')) {
       msgAttachments.push(mockLinkPreview(url));
     }
 
-    const newMessage: Message = {
-      id: `local_${Date.now()}`,
+    const tempId = `local_${Date.now()}`;
+    const optimistic: Message = {
+      id: tempId,
       type: 'message',
-      sender_id: CURRENT_USER_ID,
+      sender_id: currentUserId,
       sender_type: 'user',
-      sender_name: 'You',
+      sender_name: myName,
       content: text,
       ...(msgAttachments.length ? { attachments: msgAttachments } : {}),
       timestamp: Date.now(),
@@ -245,14 +333,27 @@ export function ChatScreen() {
           }
         : {}),
     };
-
-    setMessages((prev) => [...prev, newMessage]);
-    applyMentionEffects(extractMentionsFromHtml(text));
+    setMessages((prev) => [...prev, optimistic]);
+    const replyId = replyTo?.id;
     setReplyTo(null);
-    // TODO: call sendMessage(chat.id, content, replyTo?.id)
+
+    try {
+      const saved = await chatsApi.sendMessage(chatId, text, replyId, msgAttachments);
+      // Replace the optimistic message; dedupe if the WS echo already landed it.
+      setMessages((prev) => {
+        const withoutTemp = prev.filter((m) => m.id !== tempId);
+        return withoutTemp.some((m) => m.id === saved.id) ? withoutTemp : [...withoutTemp, saved];
+      });
+    } catch {
+      // Mark the optimistic message as failed by leaving it; a retry UI can come later.
+    }
   };
 
   // ─── Render ─────────────────────────────────────────────────────────────────
+
+  if (!chat) {
+    return <NoChatScreen onPressMenu={openSidebar} />;
+  }
 
   return (
     <View className="bg-background flex-1">
@@ -270,7 +371,7 @@ export function ChatScreen() {
         <MessageList
           key={chat.id}
           messages={messages}
-          currentActorId={CURRENT_USER_ID}
+          currentActorId={currentUserId}
           participants={chat.participants}
           onReact={handleReact}
           onLongPress={handleLongPress}
@@ -291,8 +392,8 @@ export function ChatScreen() {
         <MessageActionOverlay
           message={selectedMessage}
           layout={selectedLayout}
-          isMine={selectedMessage.sender_id === CURRENT_USER_ID}
-          currentActorId={CURRENT_USER_ID}
+          isMine={selectedMessage.sender_id === currentUserId}
+          currentActorId={currentUserId}
           onDismiss={dismissOverlay}
           onReact={(emoji) => handleReact(selectedMessage.id, emoji)}
           onReply={handleReply}
@@ -309,7 +410,7 @@ export function ChatScreen() {
         visible={reactionsMessage !== null}
         reactions={reactionsMessage?.reactions ?? null}
         participants={chat.participants}
-        currentActorId={CURRENT_USER_ID}
+        currentActorId={currentUserId}
         onClose={() => setReactionsMessage(null)}
       />
 
@@ -322,6 +423,47 @@ export function ChatScreen() {
           setEmojiPickerFor(null);
         }}
       />
+    </View>
+  );
+}
+
+/**
+ * Shown when no chat is selected — most commonly right after signing in to an
+ * account that has no conversations yet. Always renders a menu button so the
+ * sidebar (new chat / upload data) stays reachable instead of a dead-end blank
+ * screen.
+ */
+function NoChatScreen({ onPressMenu }: { onPressMenu: () => void }) {
+  const insets = useSafeAreaInsets();
+  const { loading, error } = useChats();
+
+  return (
+    <View className="bg-background flex-1">
+      <View style={{ paddingTop: insets.top }}>
+        <View className="flex-row items-center px-3 py-3 pt-0">
+          <Pressable
+            onPress={onPressMenu}
+            hitSlop={8}
+            className="h-10 w-10 items-center justify-center">
+            <Icon name="menu" size={24} />
+          </Pressable>
+        </View>
+      </View>
+
+      <View className="flex-1 items-center justify-center gap-3 px-8">
+        {loading ? (
+          <ActivityIndicator />
+        ) : (
+          <>
+            <Text className="text-foreground text-center text-xl">
+              {error ? 'Couldn’t load your chats' : 'No conversations yet'}
+            </Text>
+            <Text className="text-muted-foreground text-center text-base">
+              {error ?? 'Open the menu to start a new chat or upload data.'}
+            </Text>
+          </>
+        )}
+      </View>
     </View>
   );
 }

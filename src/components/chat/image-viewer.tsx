@@ -12,6 +12,7 @@ import {
 
 import { Icon } from '@/components/icons/icon';
 import { Text } from '@/components/ui/text';
+import { authImageSource } from '@/lib/auth-image';
 
 export interface ViewerImage {
   uri: string;
@@ -40,7 +41,7 @@ function GalleryPage({ image }: { image: ViewerImage }) {
   // to work with; `contentFit="contain"" keeps the image undistorted meanwhile.
   const size = aspect ? fitContainer(aspect, { width, height }) : { width, height };
 
-  return <Image source={{ uri: image.uri }} style={size} contentFit="contain" transition={150} />;
+  return <Image source={authImageSource(image.uri)} style={size} contentFit="contain" transition={150} />;
 }
 
 /**

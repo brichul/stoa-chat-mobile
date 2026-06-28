@@ -14,11 +14,13 @@ import { avatarColor } from './participant-avatar';
 
 export const KIND_COLOR: Record<MentionKind, string> = {
   user: '#98514B',
+  bot: '#7A5BA6',
   node: '#5B7FA6',
   vault: '#5B8C6B',
 };
 
 const KIND_ICON: Record<Exclude<MentionKind, 'user'>, IconName> = {
+  bot: 'smart-toy',
   node: 'data-object',
   vault: 'data-array',
 };

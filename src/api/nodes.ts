@@ -1,9 +1,21 @@
 import { apiFetch } from './client';
-import type { KnowledgeNode, NodeLink } from './types';
+import type { KnowledgeNode, NodeLink, NodeRef } from './types';
 
 /** List the knowledge nodes inside a vault (graph vertices for a vault). */
 export async function listNodes(vaultId: string): Promise<KnowledgeNode[]> {
   const res = await apiFetch<{ success: boolean; nodes: KnowledgeNode[] }>(`/vaults/${vaultId}/nodes`);
+  return res.nodes ?? [];
+}
+
+/**
+ * Cross-vault node directory (GET /v1/nodes) — minimal refs for nodes the user
+ * can access, optionally filtered by a title query. Powers the node picker and
+ * `.node` mention suggestions.
+ */
+export async function listNodeDirectory(query?: string): Promise<NodeRef[]> {
+  const res = await apiFetch<{ success: boolean; nodes: NodeRef[] }>('/nodes', {
+    query: query ? { q: query } : undefined,
+  });
   return res.nodes ?? [];
 }
 

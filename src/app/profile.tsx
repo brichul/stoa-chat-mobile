@@ -1,15 +1,17 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Pressable, ScrollView, View } from 'react-native';
+import * as React from 'react';
+import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { ProjectItem, PublicBot, PublicProfile, PublicTeam, PublicVault } from '@/api/types';
+import { getUserProfile } from '@/api/profile';
+import type { ProjectItem, PublicBot, PublicProfile, PublicTeam, PublicVault, UserProfile } from '@/api/types';
 import { Icon } from '@/components/icons/icon';
 import { CustomIcon } from '@/components/icons/custom-icon';
 import { avatarColor } from '@/components/chat/participant-avatar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Text } from '@/components/ui/text';
-import { CURRENT_USER_ID, getMockProfile } from '@/data/mock';
-import { useMyProfile } from '@/data/my-profile-store';
+import { useCurrentUserId } from '@/hooks/use-current-user-id';
+import { authImageSource } from '@/lib/auth-image';
 
 function profileLabel(p: PublicProfile): string {
   return p.display_name || p.username || p.id;
@@ -20,7 +22,7 @@ function ProfileAvatar({ profile, size }: { profile: PublicProfile; size: number
   const bg = avatarColor(profile.id);
   return (
     <Avatar alt={initial} style={{ width: size, height: size, borderRadius: size / 2 }}>
-      {profile.avatar_url ? <AvatarImage source={{ uri: profile.avatar_url }} /> : null}
+      {profile.avatar_url ? <AvatarImage source={authImageSource(profile.avatar_url)} /> : null}
       <AvatarFallback style={{ backgroundColor: bg }}>
         <Text style={{ color: '#fff', fontSize: size * 0.4, fontWeight: '600' }}>{initial}</Text>
       </AvatarFallback>
@@ -120,12 +122,37 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { userId } = useLocalSearchParams<{ userId: string }>();
-  const isOwn = !userId || userId === CURRENT_USER_ID;
+  const currentUserId = useCurrentUserId();
+  const isOwn = !userId || userId === currentUserId;
+  const targetId = userId || currentUserId;
 
-  // Own profile reads from the editable store (reflects edits); others use mocks.
-  // See src/api/profile.ts for the live backend contract.
-  const myProfile = useMyProfile();
-  const { profile, teams, bots, vaults } = isOwn ? myProfile : getMockProfile(userId);
+  const [data, setData] = React.useState<UserProfile | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  React.useEffect(() => {
+    if (!targetId) return;
+    let active = true;
+    setLoading(true);
+    getUserProfile(targetId)
+      .then((res) => {
+        if (active) setData(res);
+      })
+      .catch(() => {
+        if (active) setData(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+  }, [targetId]);
+
+  if (loading || !data) {
+    return (
+      <View className="bg-background flex-1 items-center justify-center" style={{ paddingTop: insets.top }}>
+        {loading ? <ActivityIndicator /> : <Text className="text-muted-foreground text-sm">Profile not found.</Text>}
+      </View>
+    );
+  }
+
+  const { profile, teams, bots, vaults } = data;
   const projects = profile.current_projects ?? [];
 
   return (

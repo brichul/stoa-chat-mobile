@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Text } from '@/components/ui/text';
 import { useAuth } from '@/contexts/auth-context';
+import { chatDisplayTitle } from '@/lib/chat-title';
 
 import { ParticipantCluster } from './participant-avatar';
 
@@ -54,7 +55,7 @@ export function ChatHeader({ chat, onPressMenu, onPressTitle }: ChatHeaderProps)
             className="text-foreground text-xl"
             style={{ maxWidth: 200 }}
             numberOfLines={1}>
-            {chat.name ?? 'Untitled chat'}
+            {chatDisplayTitle(chat, user?.id ?? '')}
           </Text>
           <Text
             className="text-muted-foreground text-xs"

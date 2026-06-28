@@ -5,12 +5,13 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 
 
 import { ANIM_SLOW } from '@/constants/animation';
 
+import * as chatsApi from '@/api/chats';
 import type { Chat } from '@/api/types';
 import { ChatScreen } from '@/components/chat/chat-screen';
 import { GraphScreen } from '@/components/graph/graph-screen';
 import { Sidebar } from '@/components/sidebar/sidebar';
+import { useChats } from '@/contexts/chats-context';
 import { WorkspaceProvider, type WorkspaceContextValue } from '@/contexts/workspace-context';
-import { MOCK_CHATS } from '@/data/mock';
 
 /**
  * Composes the surfaces:
@@ -22,10 +23,46 @@ import { MOCK_CHATS } from '@/data/mock';
  */
 export function Workspace() {
   const { width } = useWindowDimensions();
+  const { chats, upsertChat } = useChats();
 
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [isGraphOpen, setIsGraphOpen] = React.useState(false);
-  const [activeChat, setActiveChatState] = React.useState<Chat | null>(MOCK_CHATS[0] ?? null);
+  const [activeChat, setActiveChatState] = React.useState<Chat | null>(null);
+
+  // Default to the most recent chat once chats load, until the user picks one.
+  const userPickedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!userPickedRef.current && !activeChat && chats.length) {
+      setActiveChatState(chats[0]);
+    }
+  }, [chats, activeChat]);
+
+  const setActiveChat = React.useCallback((chat: Chat | null) => {
+    userPickedRef.current = true;
+    setActiveChatState(chat);
+  }, []);
+
+  // Create a conversation on the backend, then open it. The POST response is a
+  // partial chat (no participants), so re-fetch the full document before making
+  // it active — the chat header/list read `chat.participants` directly.
+  const creatingRef = React.useRef(false);
+  const newChat = React.useCallback(async () => {
+    setSidebarOpen(false);
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    try {
+      const created = await chatsApi.createChat();
+      const full = await chatsApi.getChat(created.id);
+      upsertChat(full);
+      userPickedRef.current = true;
+      setActiveChatState(full);
+    } catch {
+      // Surfacing failures here can come with a retry affordance later; for now
+      // leaving the user on their current view is preferable to a hard crash.
+    } finally {
+      creatingRef.current = false;
+    }
+  }, [upsertChat]);
 
   const graphProgress = useSharedValue(0);
 
@@ -44,16 +81,16 @@ export function Workspace() {
     () => ({
       activeChat,
       activeChatId: activeChat?.id ?? null,
-      setActiveChat: setActiveChatState,
+      setActiveChat,
       isGraphOpen,
       openSidebar: () => setSidebarOpen(true),
       closeSidebar: () => setSidebarOpen(false),
       openGraph,
       closeGraph,
-      newChat: () => setSidebarOpen(false),
+      newChat,
       uploadData: () => setSidebarOpen(false),
     }),
-    [activeChat, isGraphOpen, openGraph, closeGraph]
+    [activeChat, setActiveChat, isGraphOpen, openGraph, closeGraph, newChat]
   );
 
   const graphClipStyle = useAnimatedStyle(() => ({ width: graphProgress.value * width }));

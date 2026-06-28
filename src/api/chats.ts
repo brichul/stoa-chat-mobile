@@ -1,5 +1,5 @@
 import { apiFetch } from './client';
-import type { Chat, ChatStatus, ChatType, Message } from './types';
+import type { Chat, ChatStatus, ChatType, Message, MessageAttachment } from './types';
 
 export interface ListChatsParams {
   chat_type?: ChatType;
@@ -57,11 +57,16 @@ export async function listMessages(
 export async function sendMessage(
   chatId: string,
   content: string,
-  replyToId?: string
+  replyToId?: string,
+  attachments?: MessageAttachment[]
 ): Promise<Message> {
   const res = await apiFetch<{ success: boolean; message: Message }>(`/chats/${chatId}/messages`, {
     method: 'POST',
-    json: { content, ...(replyToId ? { reply_to_id: replyToId } : {}) },
+    json: {
+      content,
+      ...(replyToId ? { reply_to_id: replyToId } : {}),
+      ...(attachments && attachments.length ? { attachments } : {}),
+    },
   });
   return res.message;
 }
@@ -142,4 +147,12 @@ export function addReaction(
 
 export function getPinnedMessages(chatId: string): Promise<{ success: boolean; messages: Message[] }> {
   return apiFetch(`/chats/${chatId}/pinned-messages`);
+}
+
+export function pinMessage(chatId: string, messageId: string): Promise<{ success: boolean }> {
+  return apiFetch(`/chats/${chatId}/messages/${messageId}/pin`, { method: 'POST' });
+}
+
+export function unpinMessage(chatId: string, messageId: string): Promise<{ success: boolean }> {
+  return apiFetch(`/chats/${chatId}/messages/${messageId}/pin`, { method: 'DELETE' });
 }

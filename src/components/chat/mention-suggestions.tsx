@@ -10,6 +10,7 @@ import { MentionGlyph } from './mention-views';
 
 const SECTIONS: { key: keyof MentionDirectory; label: string }[] = [
   { key: 'users', label: 'People' },
+  { key: 'bots', label: 'Bots' },
   { key: 'nodes', label: 'Nodes' },
   { key: 'vaults', label: 'Vaults' },
 ];
@@ -78,7 +79,9 @@ export function MentionSuggestions({
                       {item.label}
                     </Text>
                     <Text className="text-muted-foreground text-xs" numberOfLines={1}>
-                      {item.kind === 'user' ? `@${item.inserted}` : item.inserted}
+                      {item.kind === 'user' || item.kind === 'bot'
+                        ? `@${item.inserted}`
+                        : item.inserted}
                     </Text>
                   </View>
                 </Pressable>

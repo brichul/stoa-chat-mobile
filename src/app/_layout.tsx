@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/contexts/auth-context';
+import { ChatsProvider } from '@/contexts/chats-context';
 import { useAppFonts } from '@/hooks/use-fonts';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -28,14 +29,16 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <AuthProvider>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="chat-details" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="profile" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="profile-edit" options={{ presentation: 'modal' }} />
-          </Stack>
-          <PortalHost />
-          <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          <ChatsProvider>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="chat-details" options={{ presentation: 'modal' }} />
+              <Stack.Screen name="profile" options={{ presentation: 'modal' }} />
+              <Stack.Screen name="profile-edit" options={{ presentation: 'modal' }} />
+            </Stack>
+            <PortalHost />
+            <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+          </ChatsProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

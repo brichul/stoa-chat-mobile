@@ -10,10 +10,9 @@
  * Resolution (raw → human label) is backed by the mock directories for now —
  * swap these for real lookups once the backend exposes user/node/vault search.
  */
-import type { Participant } from '@/api/types';
-import { MOCK_NODES, MOCK_USERS, MOCK_VAULTS } from '@/data/mock';
+import type { NodeRef, Participant, VaultRef } from '@/api/types';
 
-export type MentionKind = 'user' | 'node' | 'vault';
+export type MentionKind = 'user' | 'bot' | 'node' | 'vault';
 
 /** The single mention trigger character. */
 export const MENTION_INDICATOR = '@';
@@ -33,32 +32,13 @@ export interface MentionRef {
 
 // ─── Resolution ────────────────────────────────────────────────────────────────
 
-function resolveUser(raw: string): MentionRef {
-  const u = MOCK_USERS.find((m) => m.username === raw || m.id === raw);
-  return {
-    kind: 'user',
-    raw,
-    id: u?.id ?? raw,
-    label: u?.display_name ?? raw,
-    inserted: u?.username ?? raw,
-    avatar_url: u?.avatar_url ?? null,
-  };
-}
-
-function resolveNode(raw: string): MentionRef {
-  const n = MOCK_NODES.find((m) => m.id === raw);
-  return { kind: 'node', raw, id: raw, label: n?.title ?? raw, inserted: raw };
-}
-
-function resolveVault(raw: string): MentionRef {
-  const v = MOCK_VAULTS.find((m) => m.id === raw);
-  return { kind: 'vault', raw, id: raw, label: v?.name ?? raw, inserted: raw };
-}
-
+/**
+ * Resolve a `raw` value back to a MentionRef. Labels come from the tag's own
+ * `text`/`raw` when rendering received content (the renderer reads the HTML
+ * directly), so this is a structural fallback keyed only on `raw`.
+ */
 export function resolveMention(kind: MentionKind, raw: string): MentionRef {
-  if (kind === 'user') return resolveUser(raw);
-  if (kind === 'node') return resolveNode(raw);
-  return resolveVault(raw);
+  return { kind, raw, id: raw, label: raw, inserted: raw };
 }
 
 // ─── Enriched-HTML helpers ───────────────────────────────────────────────────────
@@ -137,49 +117,103 @@ export function extractMentionsFromHtml(content: string): MentionRef[] {
 
 export interface MentionDirectory {
   users: MentionRef[];
+  bots: MentionRef[];
   nodes: MentionRef[];
   vaults: MentionRef[];
 }
 
+/** Live data the mention directory is built from (fetched from the backend). */
+export interface MentionDirectorySource {
+  users: { id: string; username?: string | null; display_name?: string | null; avatar_url?: string | null }[];
+  bots: { id: string; name?: string | null; display_name?: string | null; avatar_url?: string | null }[];
+  nodes: NodeRef[];
+  vaults: VaultRef[];
+}
+
 /**
  * The pool of things that can be mentioned. Chat participants are merged in
- * first (so people already in the chat rank ahead of the wider mock directory),
- * deduped by id.
+ * first (so people already in the chat rank ahead of the wider directory),
+ * deduped by id; the rest comes from the fetched directory source.
  */
-export function buildDirectory(participants: Participant[] = []): MentionDirectory {
+export function buildDirectory(
+  participants: Participant[] = [],
+  source?: MentionDirectorySource
+): MentionDirectory {
   const users: MentionRef[] = [];
+  const bots: MentionRef[] = [];
   const seen = new Set<string>();
 
   for (const p of participants) {
-    if (p.type !== 'user' || seen.has(p.id)) continue;
-    seen.add(p.id);
-    const username = p.username ?? MOCK_USERS.find((m) => m.id === p.id)?.username ?? p.id;
+    if (seen.has(p.id)) continue;
+    if (p.type === 'user') {
+      seen.add(p.id);
+      const username = p.username ?? p.id;
+      users.push({
+        kind: 'user',
+        raw: username,
+        id: p.id,
+        label: p.display_name ?? p.name ?? username,
+        inserted: username,
+        avatar_url: p.avatar_url ?? null,
+      });
+    } else if (p.type === 'bot') {
+      seen.add(p.id);
+      // The backend resolves bot mentions by name, so `raw` is the bot name.
+      const name = p.username ?? p.name ?? p.id;
+      bots.push({
+        kind: 'bot',
+        raw: name,
+        id: p.id,
+        label: p.display_name ?? p.name ?? name,
+        inserted: name,
+        avatar_url: p.avatar_url ?? null,
+      });
+    }
+  }
+  for (const u of source?.users ?? []) {
+    if (seen.has(u.id)) continue;
+    seen.add(u.id);
+    const username = u.username ?? u.id;
     users.push({
       kind: 'user',
       raw: username,
-      id: p.id,
-      label: p.display_name ?? p.name ?? username,
+      id: u.id,
+      label: u.display_name ?? username,
       inserted: username,
-      avatar_url: p.avatar_url ?? null,
+      avatar_url: u.avatar_url ?? null,
     });
   }
-  for (const m of MOCK_USERS) {
-    if (seen.has(m.id)) continue;
-    seen.add(m.id);
-    users.push({
-      kind: 'user',
-      raw: m.username,
-      id: m.id,
-      label: m.display_name,
-      inserted: m.username,
-      avatar_url: m.avatar_url ?? null,
+  for (const b of source?.bots ?? []) {
+    if (seen.has(b.id)) continue;
+    seen.add(b.id);
+    const name = b.name ?? b.id;
+    bots.push({
+      kind: 'bot',
+      raw: name,
+      id: b.id,
+      label: b.display_name ?? name,
+      inserted: name,
+      avatar_url: b.avatar_url ?? null,
     });
   }
 
   return {
     users,
-    nodes: MOCK_NODES.map((n) => resolveNode(n.id)),
-    vaults: MOCK_VAULTS.map((v) => resolveVault(v.id)),
+    bots,
+    nodes: (source?.nodes ?? []).map((n) => ({
+      kind: 'node',
+      raw: n.id,
+      id: n.id,
+      label: n.title ?? n.id,
+      inserted: n.id,
+    })),
+    vaults: (source?.vaults ?? []).map((v) => ({
+      kind: 'vault',
+      raw: v.id,
+      id: v.id,
+      label: v.name ?? v.id,
+      inserted: v.id,
+    })),
   };
 }
 
@@ -193,6 +227,7 @@ function matches(ref: MentionRef, q: string): boolean {
 export function searchDirectory(dir: MentionDirectory, query: string): MentionDirectory {
   return {
     users: dir.users.filter((r) => matches(r, query)),
+    bots: dir.bots.filter((r) => matches(r, query)),
     nodes: dir.nodes.filter((r) => matches(r, query)),
     vaults: dir.vaults.filter((r) => matches(r, query)),
   };

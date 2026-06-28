@@ -287,8 +287,9 @@ export function ChatScreen() {
             width: a.width,
             height: a.height,
           });
-        } catch {
-          // Skip an attachment that failed to upload rather than blocking the send.
+        } catch (err) {
+          // Surface the failure instead of silently sending an empty message.
+          console.warn(`Attachment upload failed (${a.name}):`, err);
         }
       } else {
         msgAttachments.push({

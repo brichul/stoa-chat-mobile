@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useColorScheme } from 'nativewind';
 import * as React from 'react';
@@ -258,16 +259,35 @@ export function MessageComposer({
     // Defaults to images; multiple selection where the platform supports it.
     const res = await ImagePicker.launchImageLibraryAsync({ allowsMultipleSelection: true });
     if (res.canceled) return;
-    addAttachments(
-      res.assets.map((a, i) => ({
-        kind: 'image',
-        name: a.fileName ?? `image-${i + 1}.jpg`,
-        uri: a.uri,
-        mimeType: a.mimeType,
-        width: a.width,
-        height: a.height,
-      }))
+    // Normalize every pick to JPEG. iOS hands back HEIC, which neither off-Apple
+    // clients nor the agent's vision pipeline accept; converting here fixes both
+    // display and the agent relay in one place.
+    const converted = await Promise.all(
+      res.assets.map(async (a, i) => {
+        let uri = a.uri;
+        let width = a.width;
+        let height = a.height;
+        try {
+          const out = await ImageManipulator.manipulate(a.uri).renderAsync();
+          const saved = await out.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
+          uri = saved.uri;
+          width = saved.width;
+          height = saved.height;
+        } catch (e) {
+          console.warn('Image JPEG conversion failed; using original:', e);
+        }
+        const base = (a.fileName ?? `image-${i + 1}`).replace(/\.[^.]+$/, '');
+        return {
+          kind: 'image' as const,
+          name: `${base}.jpg`,
+          uri,
+          mimeType: 'image/jpeg',
+          width,
+          height,
+        };
+      })
     );
+    addAttachments(converted);
   };
 
   return (
